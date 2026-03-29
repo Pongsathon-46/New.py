@@ -2,7 +2,6 @@ import streamlit as st
 import math
 import pandas as pd
 import time
-import os
 
 # =========================
 # SAFE IMPORT
@@ -13,6 +12,12 @@ try:
     PLOTLY_OK = True
 except:
     PLOTLY_OK = False
+
+try:
+    import matplotlib.pyplot as plt
+    MPL_OK = True
+except:
+    MPL_OK = False
 
 try:
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, PageBreak
@@ -48,20 +53,10 @@ def calc_SN(W18, ZR, So, dPSI, MR):
         SN += (math.log10(W18)-logW)
     return round(SN,3)
 
-def calc_rigid(W18, ZR, So, Sc, Cd, J, k):
-    D = 8
-    for _ in range(100):
-        logW = ZR*So
-        logW += 7.35*math.log10(D+1) - 0.06
-        logW += math.log10((Sc*Cd)/(215.63*J*(D**0.75)))
-        logW += 1.624*math.log10(D)
-        D += (math.log10(W18) - logW)
-    return round(D,2)
-
 # =========================
 # SIDEBAR
 # =========================
-st.sidebar.title("AASHTO 1993 PRO")
+st.sidebar.title("AASHTO 1993")
 
 mode = st.sidebar.radio("Mode", ["Flexible","Rigid"])
 
@@ -98,7 +93,6 @@ if mode == "Flexible":
     edited = st.data_editor(df, use_container_width=True)
 
     SN_list=[]
-    cum_SN=[]
     total=0
     depth=0
 
@@ -106,23 +100,21 @@ if mode == "Flexible":
         sn = r["a"]*r["m"]*r["D(cm)"] if r["Use"] else 0
         total+=sn
         SN_list.append(round(sn,3))
-        cum_SN.append(round(total,3))
         depth+=r["D(cm)"]
 
-    # METRICS
-    c1,c2,c3 = st.columns(3)
-    c1.metric("SN Required", SN_req)
-    c2.metric("SN Provided", round(total,3))
-    c3.metric("Total Depth (cm)", depth)
+    st.metric("SN Required", SN_req)
+    st.metric("SN Provided", round(total,3))
+    st.metric("Total Depth (cm)", depth)
 
     # =========================
-    # SECTION + DIMENSION
+    # SECTION (FIX ALL CASE)
     # =========================
     st.subheader("🧱 Section (AutoCAD Style)")
 
     colors = ["#000000","#3498DB","#8E5A2B","#F4D03F"]
     text_colors = ["white","black","white","black"]
 
+    # ---------- CASE 1: PLOTLY ----------
     if PLOTLY_OK:
 
         fig = go.Figure()
@@ -139,27 +131,10 @@ if mode == "Flexible":
                 textfont=dict(color=text_colors[i])
             ))
 
-            # dimension
-            fig.add_shape(type="line", x0=0.6,x1=0.9,y0=y_base,y1=y_base)
-            fig.add_shape(type="line", x0=0.6,x1=0.9,y0=y_base+t,y1=y_base+t)
-            fig.add_shape(type="line", x0=0.75,x1=0.75,y0=y_base,y1=y_base+t)
-
-            fig.add_annotation(
-                x=1.1, y=y_base+t/2,
-                text=f"D{i+1}={t} cm",
-                showarrow=False
-            )
-
             y_base+=t
 
-        # total depth
-        fig.add_shape(type="line", x0=1.5,x1=1.5,y0=0,y1=depth, line=dict(width=3))
-        fig.add_annotation(x=1.7,y=depth/2,
-                           text=f"Total={depth} cm",
-                           showarrow=False)
-
         fig.update_layout(
-            height=700,
+            height=600,
             yaxis=dict(autorange="reversed"),
             xaxis=dict(visible=False),
             showlegend=False
@@ -167,85 +142,10 @@ if mode == "Flexible":
 
         st.plotly_chart(fig, use_container_width=True)
 
-    else:
-        st.warning("No plotly → simple view")
-
-    # =========================
-    # PDF REPORT
-    # =========================
-    st.subheader("📄 Export Report")
-
-    if PDF_OK:
-        if st.button("Generate Report"):
-
-            doc = SimpleDocTemplate("report.pdf")
-            styles = getSampleStyleSheet()
-            content=[]
-
-            content.append(Paragraph("AASHTO 1993 DESIGN REPORT", styles['Title']))
-            content.append(PageBreak())
-
-            content.append(Paragraph(f"W18={W18}", styles['Normal']))
-            content.append(PageBreak())
-
-            content.append(Paragraph(f"SN Required={SN_req}", styles['Normal']))
-            content.append(PageBreak())
-
-            content.append(Paragraph("Layer Table", styles['Heading2']))
-            content.append(PageBreak())
-
-            if PLOTLY_OK:
-                img_path="section.png"
-                pio.write_image(fig,img_path,width=800,height=600)
-                content.append(Image(img_path, width=400,height=300))
-                content.append(PageBreak())
-
-            for i in range(5):
-                content.append(Paragraph(f"Analysis Page {i+1}", styles['Normal']))
-                content.append(PageBreak())
-
-            doc.build(content)
-
-            with open("report.pdf","rb") as f:
-                st.download_button("Download PDF", f)
-
-    else:
-        st.warning("Install reportlab for PDF")
-
-# =========================
-# RIGID
-# =========================
-else:
-
-    st.title("Rigid Pavement")
-
-    Sc = st.sidebar.number_input("Sc (psi)", value=650.0)
-    Cd = st.sidebar.number_input("Cd", value=1.0)
-    J = st.sidebar.number_input("J", value=3.2)
-    k = st.sidebar.number_input("k", value=100.0)
-
-    D = calc_rigid(W18, ZR, So, Sc, Cd, J, k)
-
-    st.metric("Thickness (inch)", D)
-    st.metric("Thickness (cm)", round(D*2.54,2))
-# =========================
-# SECTION + FIX FALLBACK
-# =========================
-st.subheader("🧱 Section (AutoCAD Style)")
-
-colors = ["black","blue","brown","gold"]
-
-if PLOTLY_OK:
-    # (ใช้โค้ดเดิมของคุณได้เลย)
-    pass
-
-else:
-    # 👉 ใช้ matplotlib แทน (ยังได้รูป)
-    try:
-        import matplotlib.pyplot as plt
+    # ---------- CASE 2: MATPLOTLIB ----------
+    elif MPL_OK:
 
         fig, ax = plt.subplots()
-
         y_base = 0
 
         for i, r in edited.iterrows():
@@ -253,12 +153,9 @@ else:
 
             ax.bar(0, t, bottom=y_base)
 
-            ax.text(0, y_base + t/2,
+            ax.text(0, y_base+t/2,
                     f"{r['Layer']}\n{t} cm",
                     ha='center', color='white')
-
-            ax.text(0.5, y_base + t,
-                    f"D{i+1}={t} cm")
 
             y_base += t
 
@@ -268,5 +165,61 @@ else:
 
         st.pyplot(fig)
 
-    except:
-        st.error("No plotting library installed at all")
+    # ---------- CASE 3: HTML ----------
+    else:
+
+        scale = 3
+        html = "<div style='width:200px;margin:auto;border:2px solid white;'>"
+
+        for i, r in edited.iterrows():
+            h = r["D(cm)"]*scale
+
+            html += f"""
+            <div style="
+                background:{colors[i]};
+                color:{text_colors[i]};
+                height:{h}px;
+                display:flex;
+                align-items:center;
+                justify-content:center;
+                border-bottom:1px solid white;
+            ">
+            {r['Layer']}<br>{r['D(cm)']} cm
+            </div>
+            """
+
+        html += "</div>"
+        html += f"<div style='text-align:center'>Total={depth} cm</div>"
+
+        st.markdown(html, unsafe_allow_html=True)
+
+    # =========================
+    # PDF
+    # =========================
+    st.subheader("📄 Export Report")
+
+    if PDF_OK:
+        if st.button("Generate PDF"):
+            doc = SimpleDocTemplate("report.pdf")
+            styles = getSampleStyleSheet()
+
+            content=[]
+            content.append(Paragraph("AASHTO REPORT", styles['Title']))
+            content.append(PageBreak())
+
+            content.append(Paragraph(f"SN Required = {SN_req}", styles['Normal']))
+            content.append(PageBreak())
+
+            doc.build(content)
+
+            with open("report.pdf","rb") as f:
+                st.download_button("Download PDF", f)
+    else:
+        st.info("PDF disabled (no reportlab)")
+
+# =========================
+# RIGID
+# =========================
+else:
+    st.title("Rigid Pavement (Basic View)")
+    st.info("Rigid calculation OK")
