@@ -1,37 +1,10 @@
-
-# ==============================================
-# AASHTO 1993 ENTERPRISE (DEPLOY READY)
-# ==============================================
-
 import streamlit as st
 import math
 import pandas as pd
-import sqlite3
-import json
 import os
 
 # =========================
-# PAGE CONFIG
-# =========================
-st.set_page_config(page_title="AASHTO 1993", layout="wide")
-
-# =========================
-# DATABASE
-# =========================
-conn = sqlite3.connect("projects.db", check_same_thread=False)
-c = conn.cursor()
-
-c.execute("""
-CREATE TABLE IF NOT EXISTS projects (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT,
-    data TEXT
-)
-""")
-conn.commit()
-
-# =========================
-# SAFE IMPORT MATPLOTLIB
+# SAFE IMPORT
 # =========================
 try:
     import matplotlib.pyplot as plt
@@ -40,7 +13,15 @@ except:
     MATPLOTLIB_OK = False
 
 # =========================
-# LOGIN (ENV SAFE)
+# PAGE CONFIG (ต้องอยู่บนสุด)
+# =========================
+st.set_page_config(
+    page_title="AASHTO 1993",
+    layout="wide"
+)
+
+# =========================
+# LOGIN (ใช้ ENV สำหรับ Cloud)
 # =========================
 USER = os.getenv("APP_USER", "admin")
 PASS = os.getenv("APP_PASS", "1234")
@@ -50,11 +31,11 @@ if "login" not in st.session_state:
 
 if not st.session_state.login:
     st.title("Login")
-    u = st.text_input("Username")
-    p = st.text_input("Password", type="password")
+    user = st.text_input("Username")
+    pwd = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        if u == USER and p == PASS:
+        if user == USER and pwd == PASS:
             st.session_state.login = True
             st.rerun()
         else:
@@ -65,7 +46,11 @@ if not st.session_state.login:
 # FUNCTIONS
 # =========================
 def reliability_to_zr(R):
-    table = {50:0.0,60:-0.253,70:-0.524,75:-0.674,80:-0.841,85:-1.036,90:-1.282,95:-1.645,99:-2.327}
+    table = {
+        50:0.0,60:-0.253,70:-0.524,
+        75:-0.674,80:-0.841,85:-1.036,
+        90:-1.282,95:-1.645,99:-2.327
+    }
     return table[R]
 
 def MR_from_CBR(CBR):
@@ -83,7 +68,8 @@ def calc_SN(W18, ZR, So, dPSI, MR):
 # =========================
 # SIDEBAR
 # =========================
-st.sidebar.title("AASHTO 1993")
+st.sidebar.title("AASHTO 1993 PRO")
+
 mode = st.sidebar.radio("Mode", ["Flexible","Rigid"])
 
 W18 = st.sidebar.number_input("W18", value=5000000.0)
@@ -97,6 +83,9 @@ ZR = reliability_to_zr(R)
 dPSI = Pi - Pt
 MR = MR_from_CBR(CBR)
 
+# =========================
+# TABS
+# =========================
 tab1, tab2 = st.tabs(["Design","Sensitivity"])
 
 # =========================
@@ -118,7 +107,11 @@ with tab1:
     df = pd.DataFrame(data, columns=["Layer","a","m","D(cm)","Use"])
     edited = st.data_editor(df, use_container_width=True)
 
-    SN_prov = sum([r["a"]*r["m"]*r["D(cm)"] for _,r in edited.iterrows() if r["Use"]])
+    SN_prov = sum([
+        r["a"]*r["m"]*r["D(cm)"]
+        for _,r in edited.iterrows() if r["Use"]
+    ])
+
     total_thickness = edited["D(cm)"].sum()
 
     col1.metric("SN Required", SN_req)
@@ -135,14 +128,17 @@ with tab1:
             ax.text(0, y+r["D(cm)"]/2, f"{r['D(cm)']} cm", ha='center', color='white')
             ax.text(0.6, y+r["D(cm)"], f"D{i+1}")
             y+=r["D(cm)"]
+
         ax.set_xlim(-1,1)
         ax.set_xticks([])
         ax.invert_yaxis()
+
         st.pyplot(fig)
     else:
-        st.warning("No matplotlib - fallback view")
+        st.warning("No matplotlib → fallback view")
         for i,r in edited.iterrows():
-            st.progress(min(int(r["D(cm)"]*2),100), text=f"{r['Layer']} {r['D(cm)']} cm")
+            st.progress(min(int(r["D(cm)"]*2),100),
+                        text=f"{r['Layer']} {r['D(cm)']} cm")
 
 # =========================
 # SENSITIVITY
@@ -155,55 +151,29 @@ with tab2:
     if MATPLOTLIB_OK:
         fig2, ax2 = plt.subplots()
         ax2.plot(list(W_range), SN_list)
+        ax2.set_xlabel("W18")
+        ax2.set_ylabel("SN")
         st.pyplot(fig2)
     else:
         st.line_chart({"SN": SN_list})
 
 # =========================
-# SAVE PROJECT
-# =========================
-name = st.text_input("Project Name")
-
-if st.button("Save Project"):
-    c.execute("INSERT INTO projects (name,data) VALUES (?,?)", (name, json.dumps(edited.to_dict())))
-    conn.commit()
-    st.success("Saved to database")
-
-# LOAD
-if st.button("Load Projects"):
-    rows = c.execute("SELECT * FROM projects").fetchall()
-    st.write(rows)
-
-# =========================
-# PDF REPORT
+# PDF
 # =========================
 try:
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    from reportlab.platypus import SimpleDocTemplate, Paragraph
     from reportlab.lib.styles import getSampleStyleSheet
 
-    if st.button("Export Report"):
+    if st.button("Export PDF"):
         doc = SimpleDocTemplate("report.pdf")
         styles = getSampleStyleSheet()
 
         content = []
         content.append(Paragraph("AASHTO 1993 REPORT", styles['Title']))
-        content.append(Spacer(1,12))
-
-        for i in range(10):
-            content.append(Paragraph(f"Section {i+1}", styles['Heading2']))
-            content.append(Paragraph(f"W18 = {W18}", styles['Normal']))
-            content.append(Spacer(1,12))
-
         doc.build(content)
 
         with open("report.pdf","rb") as f:
-            st.download_button("Download PDF", f)
+            st.download_button("Download", f)
 
 except:
-    st.warning("Install reportlab for PDF")
-    [theme]
-base="dark"
-primaryColor="#00C853"
-backgroundColor="#0E1117"
-secondaryBackgroundColor="#161A23"
-textColor="#FFFFFF"
+    st.warning("No reportlab installed")
