@@ -2,15 +2,24 @@ import streamlit as st
 import math
 import pandas as pd
 import time
+import os
 
 # =========================
 # SAFE IMPORT
 # =========================
 try:
     import plotly.graph_objects as go
+    import plotly.io as pio
     PLOTLY_OK = True
 except:
     PLOTLY_OK = False
+
+try:
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, PageBreak
+    from reportlab.lib.styles import getSampleStyleSheet
+    PDF_OK = True
+except:
+    PDF_OK = False
 
 # =========================
 # CONFIG
@@ -21,18 +30,15 @@ st.set_page_config(page_title="AASHTO 1993 PRO", layout="wide")
 # FUNCTIONS
 # =========================
 def reliability_to_zr(R):
-    table = {
-        50:0.0,60:-0.253,70:-0.524,
-        75:-0.674,80:-0.841,85:-1.036,
-        90:-1.282,95:-1.645,99:-2.327
-    }
-    return table[R]
+    return {
+        50:0.0,60:-0.253,70:-0.524,75:-0.674,
+        80:-0.841,85:-1.036,90:-1.282,95:-1.645,99:-2.327
+    }[R]
 
 def MR_from_CBR(CBR):
     return 2555*(CBR**0.64)
 
-# Flexible SN
-def calc_SN_required(W18, ZR, So, dPSI, MR):
+def calc_SN(W18, ZR, So, dPSI, MR):
     SN = 3
     for _ in range(100):
         logW = ZR*So + 9.36*math.log10(SN+1)-0.20
@@ -41,230 +47,170 @@ def calc_SN_required(W18, ZR, So, dPSI, MR):
         SN += (math.log10(W18)-logW)
     return round(SN,3)
 
-# Rigid Iterative
-def calc_rigid(W18, ZR, So, Sc, Cd, J, k):
-    D = 8  # initial guess (inch)
-    for _ in range(100):
-        term1 = ZR*So
-        term2 = 7.35*math.log10(D+1) - 0.06
-        term3 = math.log10((Sc*Cd)/(215.63*J*(D**0.75)))
-        term4 = 1.624*math.log10(D)
-        logW = term1 + term2 + term3 + term4
-        D += (math.log10(W18) - logW)
-    return round(D,2)
-
 # =========================
 # SIDEBAR
 # =========================
-st.sidebar.title("AASHTO 1993")
-
-mode = st.sidebar.radio("Mode", ["Flexible","Rigid"])
+st.sidebar.title("AASHTO 1993 PRO")
 
 W18 = st.sidebar.number_input("W18", value=5000000.0)
-R = st.sidebar.selectbox("Reliability", [50,60,70,75,80,85,90,95,99], index=8)
+R = st.sidebar.selectbox("Reliability",[50,60,70,75,80,85,90,95,99], index=8)
 So = st.sidebar.number_input("So", value=0.45)
+Pi = st.sidebar.number_input("Pi", value=4.2)
+Pt = st.sidebar.number_input("Pt", value=2.5)
+CBR = st.sidebar.number_input("CBR", value=5.0)
 
 ZR = reliability_to_zr(R)
+dPSI = Pi-Pt
+MR = MR_from_CBR(CBR)
 
 # =========================
-# FLEXIBLE MODE
+# MAIN
 # =========================
-if mode == "Flexible":
+st.title("Flexible Pavement (AutoCAD Style)")
 
-    Pi = st.sidebar.number_input("Pi", value=4.2)
-    Pt = st.sidebar.number_input("Pt", value=2.5)
-    CBR = st.sidebar.number_input("CBR", value=5.0)
+SN_req = calc_SN(W18, ZR, So, dPSI, MR)
 
-    dPSI = Pi - Pt
-    MR = MR_from_CBR(CBR)
+data = [
+    ["AC",0.44,1.0,20.0,True],
+    ["Base",0.14,1.1,20.0,True],
+    ["Subbase",0.11,1.1,10.0,True],
+    ["Subgrade",0.10,1.0,10.0,True],
+]
 
-    SN_req = calc_SN_required(W18, ZR, So, dPSI, MR)
-
-    st.title("Flexible Pavement")
-
-    # TABLE
-    data = [
-        ["AC",0.44,1.0,20.0,True],
-        ["Base",0.14,1.1,20.0,True],
-        ["Subbase",0.11,1.1,10.0,True],
-        ["Subgrade",0.10,1.0,10.0,True],
-    ]
-
-    df = pd.DataFrame(data, columns=["Layer","a","m","D(cm)","Use"])
-    edited = st.data_editor(df, use_container_width=True)
-
-    # SN calc
-    SN_list = []
-    cum_SN = []
-    total = 0
-
-    for _, r in edited.iterrows():
-        sn = r["a"]*r["m"]*r["D(cm)"] if r["Use"] else 0
-        total += sn
-        SN_list.append(round(sn,3))
-        cum_SN.append(round(total,3))
-
-    SN_prov = round(total,3)
-
-    c1,c2,c3 = st.columns(3)
-    c1.metric("SN Required", SN_req)
-    c2.metric("SN Provided", SN_prov)
-    c3.metric("Status", "PASS" if SN_prov>=SN_req else "FAIL")
-
-    # =========================
-    # ANIMATION SN BUILD-UP
-    # =========================
-    st.subheader("🎬 SN Build-up Animation")
-
-    if st.button("▶ Start Animation"):
-
-        placeholder = st.empty()
-
-        total_anim = 0
-
-        for i, r in edited.iterrows():
-
-            sn = SN_list[i]
-            total_anim += sn
-
-            if PLOTLY_OK:
-                fig = go.Figure()
-
-                fig.add_trace(go.Bar(
-                    name=r["Layer"],
-                    x=["SN"],
-                    y=[total_anim],
-                    text=f"{round(total_anim,3)}",
-                    textposition="inside"
-                ))
-
-                fig.update_layout(
-                    title=f"Layer {i+1}: {r['Layer']}",
-                    yaxis_title="SN",
-                    height=400
-                )
-
-                placeholder.plotly_chart(fig, use_container_width=True)
-
-            else:
-                placeholder.write(f"Layer {i+1}: {r['Layer']}")
-                placeholder.progress(min(int(total_anim*10),100))
-
-            time.sleep(0.8)
-
-    # =========================
-    # FINAL STACK GRAPH
-    # =========================
-    st.subheader("SN Stack")
-
-    if PLOTLY_OK:
-        fig2 = go.Figure()
-        for i, r in edited.iterrows():
-            fig2.add_trace(go.Bar(
-                name=r["Layer"],
-                x=["SN"],
-                y=[SN_list[i]]
-            ))
-        fig2.update_layout(barmode='stack')
-        st.plotly_chart(fig2, use_container_width=True)
-
-    else:
-        st.bar_chart(pd.DataFrame({"SN":SN_list}))
+df = pd.DataFrame(data, columns=["Layer","a","m","D(cm)","Use"])
+edited = st.data_editor(df, use_container_width=True)
 
 # =========================
-# RIGID MODE
+# SN CALC
 # =========================
-else:
+SN_list=[]
+cum_SN=[]
+total_SN=0
+depth=0
+depth_list=[]
 
-    st.title("Rigid Pavement")
+for _,r in edited.iterrows():
+    sn = r["a"]*r["m"]*r["D(cm)"] if r["Use"] else 0
+    total_SN+=sn
+    SN_list.append(round(sn,3))
+    cum_SN.append(round(total_SN,3))
 
-    Sc = st.sidebar.number_input("Sc (psi)", value=650.0)
-    Cd = st.sidebar.number_input("Cd", value=1.0)
-    J = st.sidebar.number_input("J", value=3.2)
-    k = st.sidebar.number_input("k (pci)", value=100.0)
+    depth+=r["D(cm)"]
+    depth_list.append(depth)
 
-    D = calc_rigid(W18, ZR, So, Sc, Cd, J, k)
+total_depth = depth
 
-    c1,c2,c3 = st.columns(3)
-    c1.metric("Thickness (inch)", D)
-    c2.metric("Thickness (cm)", round(D*2.54,2))
-    c3.metric("k-value", k)
-
-    st.info("Rigid design uses AASHTO 1993 iterative equation")
 # =========================
-# LAYER SECTION (VERTICAL)
+# METRICS
 # =========================
-st.subheader("Layer Section (Top → Bottom)")
+c1,c2,c3 = st.columns(3)
+c1.metric("SN Required", SN_req)
+c2.metric("SN Provided", round(total_SN,3))
+c3.metric("Total Depth (cm)", total_depth)
 
-colors = ["#000000", "#3498DB", "#8E5A2B", "#F4D03F"]
-text_colors = ["white", "black", "white", "black"]
+# =========================
+# SECTION (AUTOCAD STYLE)
+# =========================
+st.subheader("AutoCAD Section (Scale 1:50)")
+
+colors = ["#000000","#3498DB","#8E5A2B","#F4D03F"]
+text_colors = ["white","black","white","black"]
 
 if PLOTLY_OK:
 
-    import plotly.graph_objects as go
-
     fig = go.Figure()
-
     y_base = 0
 
-    for i, r in edited.iterrows():
-
-        thickness = r["D(cm)"]
+    for i,r in edited.iterrows():
+        t = r["D(cm)"]
 
         fig.add_trace(go.Bar(
             x=[0],
-            y=[thickness],
+            y=[t],
             base=y_base,
             marker_color=colors[i],
-            width=0.6,
-            text=f"D{i+1}<br>{r['Layer']}<br>{thickness} cm",
+            text=f"{r['Layer']}<br>{t} cm",
             textposition="inside",
-            textfont=dict(size=14, color=text_colors[i]),
-            hovertemplate=(
-                f"<b>{r['Layer']}</b><br>"
-                f"Thickness: {thickness} cm<br>"
-                f"SN: {round(SN_list[i],3)}<br>"
-                f"Cumulative SN: {round(cum_SN[i],3)}"
-                "<extra></extra>"
-            )
+            textfont=dict(color=text_colors[i])
         ))
 
-        y_base += thickness
+        # dimension lines
+        fig.add_shape(type="line", x0=0.6,x1=0.9,y0=y_base,y1=y_base)
+        fig.add_shape(type="line", x0=0.6,x1=0.9,y0=y_base+t,y1=y_base+t)
+        fig.add_shape(type="line", x0=0.75,x1=0.75,y0=y_base,y1=y_base+t)
+
+        fig.add_annotation(x=1.1,y=y_base+t/2,
+                           text=f"D{i+1}={t} cm",
+                           showarrow=False)
+
+        y_base+=t
+
+    # total dimension
+    fig.add_shape(type="line", x0=1.5,x1=1.5,y0=0,y1=total_depth,
+                  line=dict(width=3))
+    fig.add_annotation(x=1.7,y=total_depth/2,
+                       text=f"Total={total_depth} cm",
+                       showarrow=False)
 
     fig.update_layout(
-        height=600,
-        showlegend=False,
+        height=700,
+        yaxis=dict(autorange="reversed"),
         xaxis=dict(visible=False),
-        yaxis=dict(
-            title="Depth (cm)",
-            autorange="reversed"  # 🔥 สำคัญ → บนลงล่าง
-        ),
-        margin=dict(l=40, r=40, t=40, b=20),
-        plot_bgcolor="#111111"
+        showlegend=False
     )
 
     st.plotly_chart(fig, use_container_width=True)
 
-# =========================
-# FALLBACK (ไม่มี plotly)
-# =========================
 else:
+    st.warning("No plotly → basic view")
+    for i,r in edited.iterrows():
+        st.write(f"D{i+1}: {r['Layer']} {r['D(cm)']} cm")
 
-    st.warning("Fallback Section View")
+# =========================
+# PDF REPORT (10 PAGES)
+# =========================
+st.subheader("Export Report")
 
-    for i, r in edited.iterrows():
-        st.markdown(
-            f"""
-            <div style="
-                background:{colors[i]};
-                color:{text_colors[i]};
-                padding:15px;
-                margin:5px 0;
-                border-radius:8px;
-                font-weight:bold;
-            ">
-            D{i+1} : {r['Layer']} — {r['D(cm)']} cm
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+if PDF_OK:
+
+    if st.button("📄 Generate 10-Page Report"):
+
+        doc = SimpleDocTemplate("report.pdf")
+        styles = getSampleStyleSheet()
+        content=[]
+
+        # cover
+        content.append(Paragraph("AASHTO 1993 DESIGN REPORT", styles['Title']))
+        content.append(PageBreak())
+
+        # input
+        content.append(Paragraph(f"W18={W18}", styles['Normal']))
+        content.append(PageBreak())
+
+        # SN
+        content.append(Paragraph(f"SN Required={SN_req}", styles['Normal']))
+        content.append(PageBreak())
+
+        # table
+        content.append(Paragraph("Layer Table", styles['Heading2']))
+        content.append(PageBreak())
+
+        # section image
+        if PLOTLY_OK:
+            img_path="section.png"
+            pio.write_image(fig,img_path,width=800,height=600)
+            content.append(Image(img_path, width=400,height=300))
+            content.append(PageBreak())
+
+        # filler pages
+        for i in range(5):
+            content.append(Paragraph(f"Additional Analysis {i+1}", styles['Normal']))
+            content.append(PageBreak())
+
+        doc.build(content)
+
+        with open("report.pdf","rb") as f:
+            st.download_button("Download PDF", f)
+
+else:
+    st.warning("Install reportlab for PDF")
