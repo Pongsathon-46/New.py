@@ -175,7 +175,7 @@ if mode == "Flexible":
         st.markdown(html, unsafe_allow_html=True)
 
 # =========================
-# RIGID (เพิ่มเต็ม)
+# RIGID (เพิ่ม Section View)
 # =========================
 else:
 
@@ -191,6 +191,124 @@ else:
     st.metric("Thickness (inch)", D)
     st.metric("Thickness (cm)", round(D*2.54,2))
 
+    # =========================
+    # SECTION VIEW (🔥 เพิ่ม)
+    # =========================
+    st.subheader("🧱 Rigid Pavement Section")
+
+    # layer data (สามารถแก้ได้)
+    layers = [
+        ["PCC Slab", round(D*2.54,2)],   # แปลงเป็น cm
+        ["Subbase", 15],
+        ["Subgrade", 20],
+    ]
+
+    df_layer = pd.DataFrame(layers, columns=["Layer","D(cm)"])
+
+    colors = ["#BDC3C7", "#8E5A2B", "#F4D03F"]
+
+    total_depth = df_layer["D(cm)"].sum()
+
+    # ---------- Plotly ----------
+    if PLOTLY_OK:
+
+        fig = go.Figure()
+        y = 0
+
+        for i, r in df_layer.iterrows():
+
+            fig.add_trace(go.Bar(
+                x=[0],
+                y=[r["D(cm)"]],
+                base=y,
+                marker_color=colors[i],
+                text=f"{r['Layer']}<br>{r['D(cm)']} cm",
+                textposition="inside"
+            ))
+
+            # dimension line
+            fig.add_shape(type="line",
+                          x0=0.6, x1=0.9,
+                          y0=y, y1=y)
+
+            fig.add_shape(type="line",
+                          x0=0.6, x1=0.9,
+                          y0=y+r["D(cm)"], y1=y+r["D(cm)"])
+
+            fig.add_annotation(
+                x=1.1,
+                y=y + r["D(cm)"]/2,
+                text=f"{r['D(cm)']} cm",
+                showarrow=False
+            )
+
+            y += r["D(cm)"]
+
+        # total depth
+        fig.add_annotation(
+            x=1.5,
+            y=total_depth/2,
+            text=f"Total = {round(total_depth,1)} cm",
+            showarrow=False
+        )
+
+        fig.update_layout(
+            height=600,
+            yaxis=dict(autorange="reversed"),
+            xaxis=dict(visible=False),
+            showlegend=False
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ---------- Matplotlib ----------
+    elif MPL_OK:
+
+        fig, ax = plt.subplots()
+        y = 0
+
+        for i, r in df_layer.iterrows():
+            ax.bar(0, r["D(cm)"], bottom=y)
+
+            ax.text(0, y + r["D(cm)"]/2,
+                    f"{r['Layer']}\n{r['D(cm)']} cm",
+                    ha='center', color='black')
+
+            y += r["D(cm)"]
+
+        ax.set_xticks([])
+        ax.invert_yaxis()
+
+        st.pyplot(fig)
+
+    # ---------- HTML ----------
+    else:
+
+        html = "<div style='width:200px;margin:auto;border:2px solid white;'>"
+
+        for i, r in df_layer.iterrows():
+            html += f"""
+            <div style="
+                background:{colors[i]};
+                height:{r['D(cm)']*3}px;
+                color:black;
+                display:flex;
+                align-items:center;
+                justify-content:center;
+                border-bottom:1px solid white;
+            ">
+            {r['Layer']}<br>{r['D(cm)']} cm
+            </div>
+            """
+
+        html += "</div>"
+        html += f"<div style='text-align:center'>Total = {round(total_depth,1)} cm</div>"
+
+        st.markdown(html, unsafe_allow_html=True)
+
+    # =========================
+    # ITERATION TABLE
+    # =========================
     st.subheader("📊 Iteration Table")
 
     df_steps = pd.DataFrame(steps,
