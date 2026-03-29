@@ -90,21 +90,58 @@ if mode == "Flexible":
 
     st.title("Flexible Pavement")
 
+    auto_mode = st.toggle("🧠 Auto Design Thickness", value=True)
+
     df = pd.DataFrame([
-        ["AC",0.44,1.0,20.0,True],
-        ["Base",0.14,1.1,20.0,True],
-        ["Subbase",0.11,1.1,10.0,True],
-        ["Subgrade",0.10,1.0,10.0,True],
+        ["AC",0.44,1.0,0.0,True],
+        ["Base",0.14,1.1,0.0,True],
+        ["Subbase",0.11,1.1,0.0,True],
+        ["Subgrade",0.10,1.0,0.0,True],
     ], columns=["Layer","a","m","D(cm)","Use"])
 
     edited = st.data_editor(df, use_container_width=True)
 
+    # =========================
+    # AUTO DESIGN
+    # =========================
+    if auto_mode:
+        remaining_SN = SN_req
+
+        for i, r in edited.iterrows():
+            if r["Use"]:
+                a = r["a"]
+                m = r["m"]
+
+                # แจก SN แบบลดหลั่น
+                if r["Layer"] == "AC":
+                    SN_layer = min(remaining_SN * 0.4, remaining_SN)
+                elif r["Layer"] == "Base":
+                    SN_layer = min(remaining_SN * 0.35, remaining_SN)
+                elif r["Layer"] == "Subbase":
+                    SN_layer = remaining_SN
+                else:
+                    SN_layer = 0
+
+                if a*m > 0:
+                    D = SN_layer / (a*m)
+                else:
+                    D = 0
+
+                edited.at[i, "D(cm)"] = round(D,1)
+
+                remaining_SN -= SN_layer
+
+    # =========================
+    # CALC RESULT
+    # =========================
     total = sum(r["a"]*r["m"]*r["D(cm)"] for _,r in edited.iterrows() if r["Use"])
     depth = edited["D(cm)"].sum()
 
     st.metric("SN Required", SN_req)
     st.metric("SN Provided", round(total,3))
     st.metric("Total Depth", depth)
+
+    st.dataframe(edited, use_container_width=True)
 
     st.subheader("🧱 Section View")
 
@@ -136,7 +173,6 @@ if mode == "Flexible":
             h = r["D(cm)"] * 3
             display_h = max(h, 40)
 
-            # 🔥 auto font scale
             font_size = max(9, min(14, int(h/3)))
 
             label = f"{r['Layer']}<br>{r['D(cm)']} cm"
@@ -161,7 +197,6 @@ if mode == "Flexible":
         html += f"<div style='text-align:center'>Total = {round(depth,1)} cm</div>"
 
         st.markdown(html, unsafe_allow_html=True)
-
 # =========================
 # RIGID
 # =========================
