@@ -1,217 +1,136 @@
 import streamlit as st
 import math
-import numpy as np
-import time
-import os
 
-# ===== SAFE IMPORT =====
-try:
-    import matplotlib.pyplot as plt
-    HAS_MPL = True
-except:
-    HAS_MPL = False
-
-try:
-    from reportlab.platypus import SimpleDocTemplate, Image, Spacer, Paragraph
-    from reportlab.lib.styles import getSampleStyleSheet
-    HAS_PDF = True
-except:
-    HAS_PDF = False
+st.set_page_config(page_title="AASHTO 1993 Pavement Design", layout="wide")
 
 # =========================
 # 🔧 FUNCTIONS
 # =========================
 
 def reliability_to_zr(R):
-    table = {80:-0.841,85:-1.036,90:-1.282,95:-1.645}
-    return table.get(R, -1.645)
+    table = {
+        50: 0.0, 60: -0.253, 70: -0.524,
+        75: -0.674, 80: -0.841, 85: -1.036,
+        90: -1.282, 95: -1.645, 99: -2.327
+    }
+    return table.get(R, -1.282)
 
-def cbr_to_mr(cbr):
-    return 2555 * (cbr ** 0.64)
+def MR_from_CBR(CBR):
+    return 2555 * (CBR ** 0.64)
 
-def drainage(p):
-    if p < 1: return 1.4
-    elif p < 5: return 1.2
-    elif p < 25: return 1.0
-    elif p < 50: return 0.8
-    else: return 0.6
+# Flexible Pavement Equation (AASHTO 1993)
+def calc_SN_required(W18, ZR, So, dPSI, MR):
+    SN = 3.0
+    for _ in range(100):
+        term1 = ZR * So
+        term2 = 9.36 * math.log10(SN + 1) - 0.20
+        term3 = (math.log10(dPSI / (4.2 - 1.5))) / (0.40 + (1094 / (SN + 1) ** 5.19))
+        term4 = 2.32 * math.log10(MR) - 8.07
 
-def solve_SN(W18, ZR, So, dPSI, MR):
-    def f(SN):
-        return (ZR*So + 9.36*math.log10(SN+1)-0.20 +
-                (math.log10(dPSI/(4.2-1.5))) /
-                (0.40+(1094/(SN+1)**5.19)) +
-                2.32*math.log10(MR)-8.07 -
-                math.log10(W18))
-    SN = 0.5
-    while SN < 10:
-        if abs(f(SN)) < 0.01:
-            return SN
-        SN += 0.01
-    return None
+        logW18 = term1 + term2 + term3 + term4
+        W18_calc = 10 ** logW18
 
-def optimize(SN, a1,a2,a3,a4,m2,m3,m4):
-    best = None
-    for D1 in range(5,30):
-        for D2 in range(5,30):
-            for D3 in range(5,30):
-                for D4 in range(5,30):
-                    SNc = a1*D1 + a2*m2*D2 + a3*m3*D3 + a4*m4*D4
-                    if SNc >= SN:
-                        total = D1+D2+D3+D4
-                        if best is None or total < best[0]:
-                            best = (total,D1,D2,D3,D4)
-    return best
+        SN = SN + (math.log10(W18) - logW18)
+
+    return round(SN, 3)
+
+def calc_SN_provided(layers):
+    SN = 0
+    for layer in layers:
+        if layer["use"]:
+            SN += layer["a"] * layer["D"] * layer["m"]
+    return round(SN, 3)
 
 # =========================
-# 🎨 DRAW (MATPLOTLIB)
+# 🧭 SIDEBAR INPUT
 # =========================
 
-def draw_layers_plot(D1,D2,D3,D4,MR):
-    if not HAS_MPL:
-        return None
+st.sidebar.title("AASHTO 1993")
 
-    fig, ax = plt.subplots()
+mode = st.sidebar.radio("เลือกประเภท", ["Flexible", "Rigid"])
 
-    layers = [D1,D2,D3,D4]
-    colors = ["black","#6c9fb3","#8b5a2b","#d4a017"]
+W18 = st.sidebar.number_input("W18 (ESAL)", value=5_000_000.0, format="%.0f")
+R = st.sidebar.selectbox("Reliability (%)", [50,60,70,75,80,85,90,95,99], index=8)
+So = st.sidebar.number_input("So", value=0.45)
 
-    bottom = 0
-    y_positions = []
+Pi = st.sidebar.number_input("Initial Serviceability (Pi)", value=4.2)
+Pt = st.sidebar.number_input("Terminal Serviceability (Pt)", value=2.5)
 
-    for d in layers:
-        y_positions.append(bottom + d/2)
-        bottom += d
+CBR = st.sidebar.number_input("CBR (%)", value=5.0)
 
-    bottom = 0
-    for d,c in zip(layers,colors):
-        ax.bar(0,d,bottom=bottom)
-        bottom += d
+ZR = reliability_to_zr(R)
+dPSI = Pi - Pt
+MR = MR_from_CBR(CBR)
 
-    # ✅ dimension lines
-    bottom = 0
-    for i,d in enumerate(layers):
-        ax.plot([0.5,0.5],[bottom,bottom+d],'k-')
-        ax.annotate(f"D{i+1}",
-                    xy=(0.5,bottom+d/2),
-                    xytext=(0.8,bottom+d/2),
-                    arrowprops=dict(arrowstyle="->"))
-        bottom += d
-
-    ax.text(0,-5,f"MR={MR:.0f} psi",ha='center')
-    ax.set_xlim(-1,1.5)
-    ax.axis('off')
-
-    return fig
+st.sidebar.write(f"ZR = {ZR}")
+st.sidebar.write(f"ΔPSI = {round(dPSI,2)}")
+st.sidebar.write(f"MR = {round(MR,0)} psi")
 
 # =========================
-# 🎬 HTML ANIMATION
+# 🟢 FLEXIBLE
 # =========================
 
-def draw_layers_html_animated(D1,D2,D3,D4,MR,SN):
-    st.markdown(f"""
-    <style>
-    .layer {{
-        width:200px;
-        text-align:center;
-        color:white;
-        padding:20px;
-        margin:2px;
-        animation: slide 1s ease forwards;
-    }}
+if mode == "Flexible":
 
-    @keyframes slide {{
-        from {{transform: translateY(50px); opacity:0;}}
-        to {{transform: translateY(0); opacity:1;}}
-    }}
-    </style>
+    st.title("Flexible Pavement (AASHTO 1993)")
 
-    <div style="background:#111;padding:20px;border-radius:10px">
+    SN_required = calc_SN_required(W18, ZR, So, dPSI, MR)
 
-        <h3 style="color:white;">SN = {SN:.3f}</h3>
+    layers = [
+        {"name": "AC", "a": 0.44, "m": 1.0, "D": 20.0, "use": True},
+        {"name": "Base", "a": 0.14, "m": 1.1, "D": 20.0, "use": True},
+        {"name": "Subbase", "a": 0.11, "m": 1.1, "D": 10.0, "use": True},
+    ]
 
-        <div style="display:flex">
+    SN_provided = calc_SN_provided(layers)
 
-            <div>
-                <div class="layer" style="background:black">{D1} cm</div>
-                <div class="layer" style="background:#6c9fb3">{D2} cm</div>
-                <div class="layer" style="background:#8b5a2b">{D3} cm</div>
-                <div class="layer" style="background:#d4a017;color:black">{D4} cm</div>
-                <div class="layer" style="background:#5a3b1a">MR = {MR:.0f}</div>
-            </div>
+    col1, col2, col3 = st.columns(3)
 
-            <div style="margin-left:40px;color:white">
-                <div style="margin:40px 0">D1 →</div>
-                <div style="margin:40px 0">D2 →</div>
-                <div style="margin:40px 0">D3 →</div>
-                <div style="margin:40px 0">D4 →</div>
-            </div>
+    col1.metric("SN Required", SN_required)
+    col2.metric("SN Provided", SN_provided)
 
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    if SN_provided >= SN_required:
+        col3.success("ผ่าน")
+    else:
+        col3.error("ไม่ผ่าน")
 
-# =========================
-# 📄 PDF EXPORT
-# =========================
+    st.subheader("Layer Details")
 
-def export_pdf(fig):
-    if not HAS_PDF:
-        st.error("ไม่มี reportlab")
-        return
+    total_thickness = 0
 
-    img_path = "temp.png"
-    fig.savefig(img_path)
+    for i, layer in enumerate(layers):
+        cols = st.columns(5)
 
-    doc = SimpleDocTemplate("report.pdf")
-    styles = getSampleStyleSheet()
+        layer["D"] = cols[0].number_input(f"{layer['name']} Thickness (cm)", value=layer["D"], key=i)
+        layer["a"] = cols[1].number_input("a", value=layer["a"], key=f"a{i}")
+        layer["m"] = cols[2].number_input("m", value=layer["m"], key=f"m{i}")
+        layer["use"] = cols[3].checkbox("ใช้", value=True, key=f"use{i}")
 
-    story = []
-    story.append(Paragraph("Pavement Design Report", styles["Title"]))
-    story.append(Spacer(1,20))
-    story.append(Image(img_path, width=300, height=400))
+        SN_layer = layer["a"] * layer["D"] * layer["m"] if layer["use"] else 0
+        cols[4].write(f"SN = {round(SN_layer,3)}")
 
-    doc.build(story)
+        total_thickness += layer["D"]
 
-    st.success("Export PDF สำเร็จ")
+    st.write(f"Total Thickness = {round(total_thickness,1)} cm")
 
 # =========================
-# 🎯 UI
+# 🔵 RIGID
 # =========================
 
-st.set_page_config(layout="wide")
-st.title("🏗️ Pavement Design (AASHTO 1993 PRO)")
+else:
 
-col1,col2 = st.columns([1,2])
+    st.title("Rigid Pavement (AASHTO 1993)")
 
-with col1:
-    W18 = st.number_input("ESAL",1_000_000)
-    R = st.selectbox("Reliability",[80,85,90,95])
-    ZR = reliability_to_zr(R)
+    Ec = st.number_input("Ec (psi)", value=4_000_000.0)
+    k = st.number_input("k (pci)", value=100.0)
+    J = st.number_input("J", value=3.2)
+    Cd = st.number_input("Cd", value=1.0)
+    Sc = st.number_input("Sc (Modulus of Rupture)", value=650.0)
 
-    So = st.number_input("So",0.45)
-    dPSI = st.number_input("ΔPSI",1.7)
+    # simple estimation
+    D = (math.log10(W18) + ZR*So) * 2
 
-    CBR = st.number_input("CBR",5.0)
-    MR = cbr_to_mr(CBR)
+    st.metric("Slab Thickness (inch)", round(D,2))
+    st.metric("Slab Thickness (cm)", round(D*2.54,2))
 
-    sat = st.slider("Saturation %",0,100,10)
-    m2 = m3 = m4 = drainage(sat)
-
-    run = st.button("🚀 Calculate")
-
-with col2:
-    if run:
-        SN = solve_SN(W18,ZR,So,dPSI,MR)
-        total,D1,D2,D3,D4 = optimize(SN,0.44,0.14,0.11,0.08,m2,m3,m4)
-
-        # 🎬 animation
-        draw_layers_html_animated(D1,D2,D3,D4,MR,SN)
-
-        fig = draw_layers_plot(D1,D2,D3,D4,MR)
-
-        if fig:
-            st.pyplot(fig)
-
-        if st.button("📄 Export PDF"):
-            export_pdf(fig)
+    st.info("Rigid equation เป็น iterative ในมาตรฐานจริง")
