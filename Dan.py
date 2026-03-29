@@ -1,24 +1,31 @@
 import streamlit as st
 import math
 import pandas as pd
-import os
 
 # =========================
-# SAFE IMPORT
+# CONFIG
 # =========================
-try:
-    import matplotlib.pyplot as plt
-    MATPLOTLIB_OK = True
-except:
-    MATPLOTLIB_OK = False
+st.set_page_config(page_title="AASHTO 1993", layout="wide")
 
 # =========================
-# PAGE CONFIG (ต้องอยู่บนสุด)
+# STYLE (UI เหมือนเว็บ)
 # =========================
-st.set_page_config(
-    page_title="AASHTO 1993",
-    layout="wide"
-)
+st.markdown("""
+<style>
+.metric-box {
+    background-color: #161A23;
+    padding: 15px;
+    border-radius: 12px;
+    text-align: center;
+}
+.layer-box {
+    padding: 8px;
+    border-radius: 6px;
+    margin-bottom: 5px;
+    color: white;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # =========================
 # FUNCTIONS
@@ -34,6 +41,7 @@ def reliability_to_zr(R):
 def MR_from_CBR(CBR):
     return 2555*(CBR**0.64)
 
+# Flexible
 def calc_SN(W18, ZR, So, dPSI, MR):
     SN = 3
     for _ in range(100):
@@ -43,43 +51,54 @@ def calc_SN(W18, ZR, So, dPSI, MR):
         SN += (math.log10(W18)-logW)
     return round(SN,3)
 
+# Rigid (AASHTO Iteration)
+def calc_rigid(W18, ZR, So, Sc, Cd, J, k):
+    D = 8  # initial guess (inch)
+    for _ in range(100):
+        term1 = ZR*So
+        term2 = 7.35*math.log10(D+1) - 0.06
+        term3 = math.log10((Sc*Cd)/(215.63*J*(D**0.75)))
+        term4 = 1.624*math.log10(D)
+        logW = term1 + term2 + term3 + term4
+
+        D = D + (math.log10(W18) - logW)
+
+    return round(D,2)
+
 # =========================
 # SIDEBAR
 # =========================
-st.sidebar.title("AASHTO 1993 PRO")
+st.sidebar.title("AASHTO 1993")
 
 mode = st.sidebar.radio("Mode", ["Flexible","Rigid"])
 
 W18 = st.sidebar.number_input("W18", value=5000000.0)
 R = st.sidebar.selectbox("Reliability", [50,60,70,75,80,85,90,95,99], index=8)
 So = st.sidebar.number_input("So", value=0.45)
-Pi = st.sidebar.number_input("Pi", value=4.2)
-Pt = st.sidebar.number_input("Pt", value=2.5)
-CBR = st.sidebar.number_input("CBR", value=5.0)
 
 ZR = reliability_to_zr(R)
-dPSI = Pi - Pt
-MR = MR_from_CBR(CBR)
 
 # =========================
-# TABS
+# FLEXIBLE
 # =========================
-tab1, tab2 = st.tabs(["Design","Sensitivity"])
+if mode == "Flexible":
 
-# =========================
-# DESIGN
-# =========================
-with tab1:
+    Pi = st.sidebar.number_input("Pi", value=4.2)
+    Pt = st.sidebar.number_input("Pt", value=2.5)
+    CBR = st.sidebar.number_input("CBR", value=5.0)
 
-    col1,col2,col3,col4 = st.columns(4)
+    dPSI = Pi - Pt
+    MR = MR_from_CBR(CBR)
 
     SN_req = calc_SN(W18, ZR, So, dPSI, MR)
 
+    st.title("Flexible Pavement")
+
+    # TABLE
     data = [
-        ["AC",0.44,1.1,20.3,True],
-        ["Base",0.18,1.1,22.2,True],
-        ["Subbase",0.13,1.1,10.2,True],
-        ["Subgrade",0.10,1.1,10.2,True]
+        ["AC",0.44,1.0,20.0,True],
+        ["Base",0.14,1.1,20.0,True],
+        ["Subbase",0.11,1.1,10.0,True],
     ]
 
     df = pd.DataFrame(data, columns=["Layer","a","m","D(cm)","Use"])
@@ -90,68 +109,48 @@ with tab1:
         for _,r in edited.iterrows() if r["Use"]
     ])
 
-    total_thickness = edited["D(cm)"].sum()
+    total = edited["D(cm)"].sum()
 
-    col1.metric("SN Required", SN_req)
-    col2.metric("SN Provided", round(SN_prov,3))
-    col3.metric("Thickness", round(total_thickness,1))
-    col4.metric("W18", f"{W18:,.0f}")
+    # METRICS
+    c1,c2,c3,c4 = st.columns(4)
 
-    # SECTION
-    if MATPLOTLIB_OK:
-        fig, ax = plt.subplots()
-        y=0
-        for i,r in edited.iterrows():
-            ax.bar(0, r["D(cm)"], bottom=y)
-            ax.text(0, y+r["D(cm)"]/2, f"{r['D(cm)']} cm", ha='center', color='white')
-            ax.text(0.6, y+r["D(cm)"], f"D{i+1}")
-            y+=r["D(cm)"]
+    c1.markdown(f"<div class='metric-box'>SN Req<br><b>{SN_req}</b></div>", unsafe_allow_html=True)
+    c2.markdown(f"<div class='metric-box'>SN Prov<br><b>{round(SN_prov,3)}</b></div>", unsafe_allow_html=True)
+    c3.markdown(f"<div class='metric-box'>Thickness<br><b>{round(total,1)} cm</b></div>", unsafe_allow_html=True)
+    c4.markdown(f"<div class='metric-box'>W18<br><b>{W18:,.0f}</b></div>", unsafe_allow_html=True)
 
-        ax.set_xlim(-1,1)
-        ax.set_xticks([])
-        ax.invert_yaxis()
+    # LAYER DIAGRAM (UI สวย)
+    st.subheader("Layer Section")
 
-        st.pyplot(fig)
-    else:
-        st.warning("No matplotlib → fallback view")
-        for i,r in edited.iterrows():
-            st.progress(min(int(r["D(cm)"]*2),100),
-                        text=f"{r['Layer']} {r['D(cm)']} cm")
+    colors = ["black","#3498DB","#8E5A2B"]
+
+    y = 0
+    for i,r in edited.iterrows():
+        color = colors[i]
+        st.markdown(
+            f"<div class='layer-box' style='background:{color}'>"
+            f"D{i+1} : {r['Layer']} = {r['D(cm)']} cm</div>",
+            unsafe_allow_html=True
+        )
 
 # =========================
-# SENSITIVITY
+# RIGID
 # =========================
-with tab2:
+else:
 
-    W_range = range(1000000,10000000,1000000)
-    SN_list = [calc_SN(w, ZR, So, dPSI, MR) for w in W_range]
+    st.title("Rigid Pavement")
 
-    if MATPLOTLIB_OK:
-        fig2, ax2 = plt.subplots()
-        ax2.plot(list(W_range), SN_list)
-        ax2.set_xlabel("W18")
-        ax2.set_ylabel("SN")
-        st.pyplot(fig2)
-    else:
-        st.line_chart({"SN": SN_list})
+    Sc = st.sidebar.number_input("Sc (psi)", value=650.0)
+    Cd = st.sidebar.number_input("Cd", value=1.0)
+    J = st.sidebar.number_input("J", value=3.2)
+    k = st.sidebar.number_input("k (pci)", value=100.0)
 
-# =========================
-# PDF
-# =========================
-try:
-    from reportlab.platypus import SimpleDocTemplate, Paragraph
-    from reportlab.lib.styles import getSampleStyleSheet
+    D = calc_rigid(W18, ZR, So, Sc, Cd, J, k)
 
-    if st.button("Export PDF"):
-        doc = SimpleDocTemplate("report.pdf")
-        styles = getSampleStyleSheet()
+    c1,c2,c3 = st.columns(3)
 
-        content = []
-        content.append(Paragraph("AASHTO 1993 REPORT", styles['Title']))
-        doc.build(content)
+    c1.markdown(f"<div class='metric-box'>Thickness<br><b>{D} inch</b></div>", unsafe_allow_html=True)
+    c2.markdown(f"<div class='metric-box'>Thickness<br><b>{round(D*2.54,2)} cm</b></div>", unsafe_allow_html=True)
+    c3.markdown(f"<div class='metric-box'>k-value<br><b>{k}</b></div>", unsafe_allow_html=True)
 
-        with open("report.pdf","rb") as f:
-            st.download_button("Download", f)
-
-except:
-    st.warning("No reportlab installed")
+    st.info("Rigid design uses iterative AASHTO equation")
