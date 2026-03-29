@@ -2,15 +2,24 @@ import streamlit as st
 import math
 import pandas as pd
 import time
+import os
 
 # =========================
 # SAFE IMPORT
 # =========================
 try:
     import plotly.graph_objects as go
+    import plotly.io as pio
     PLOTLY_OK = True
 except:
     PLOTLY_OK = False
+
+try:
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, PageBreak
+    from reportlab.lib.styles import getSampleStyleSheet
+    PDF_OK = True
+except:
+    PDF_OK = False
 
 # =========================
 # CONFIG
@@ -30,7 +39,7 @@ def reliability_to_zr(R):
 def MR_from_CBR(CBR):
     return 2555*(CBR**0.64)
 
-def calc_SN_required(W18, ZR, So, dPSI, MR):
+def calc_SN(W18, ZR, So, dPSI, MR):
     SN = 3
     for _ in range(100):
         logW = ZR*So + 9.36*math.log10(SN+1)-0.20
@@ -52,7 +61,7 @@ def calc_rigid(W18, ZR, So, Sc, Cd, J, k):
 # =========================
 # SIDEBAR
 # =========================
-st.sidebar.title("AASHTO 1993")
+st.sidebar.title("AASHTO 1993 PRO")
 
 mode = st.sidebar.radio("Mode", ["Flexible","Rigid"])
 
@@ -74,11 +83,10 @@ if mode == "Flexible":
     dPSI = Pi - Pt
     MR = MR_from_CBR(CBR)
 
-    SN_req = calc_SN_required(W18, ZR, So, dPSI, MR)
+    SN_req = calc_SN(W18, ZR, So, dPSI, MR)
 
-    st.title("Flexible Pavement")
+    st.title("Flexible Pavement Design")
 
-    # TABLE
     data = [
         ["AC",0.44,1.0,20.0,True],
         ["Base",0.14,1.1,20.0,True],
@@ -89,126 +97,120 @@ if mode == "Flexible":
     df = pd.DataFrame(data, columns=["Layer","a","m","D(cm)","Use"])
     edited = st.data_editor(df, use_container_width=True)
 
-    # SN CALC
-    SN_list = []
-    cum_SN = []
-    total = 0
+    SN_list=[]
+    cum_SN=[]
+    total=0
+    depth=0
 
-    for _, r in edited.iterrows():
+    for _,r in edited.iterrows():
         sn = r["a"]*r["m"]*r["D(cm)"] if r["Use"] else 0
-        total += sn
+        total+=sn
         SN_list.append(round(sn,3))
         cum_SN.append(round(total,3))
-
-    SN_prov = round(total,3)
+        depth+=r["D(cm)"]
 
     # METRICS
     c1,c2,c3 = st.columns(3)
     c1.metric("SN Required", SN_req)
-    c2.metric("SN Provided", SN_prov)
-    c3.metric("Status", "PASS" if SN_prov>=SN_req else "FAIL")
+    c2.metric("SN Provided", round(total,3))
+    c3.metric("Total Depth (cm)", depth)
 
     # =========================
-    # ANIMATION
+    # SECTION + DIMENSION
     # =========================
-    st.subheader("🎬 SN Build-up Animation")
+    st.subheader("🧱 Section (AutoCAD Style)")
 
-    if st.button("▶ Start Animation"):
-
-        placeholder = st.empty()
-        total_anim = 0
-
-        for i, r in edited.iterrows():
-
-            total_anim += SN_list[i]
-
-            if PLOTLY_OK:
-                fig = go.Figure()
-                fig.add_trace(go.Bar(
-                    x=["SN"],
-                    y=[total_anim],
-                    text=f"{round(total_anim,3)}",
-                    textposition="inside"
-                ))
-                fig.update_layout(
-                    title=f"Layer {i+1}: {r['Layer']}",
-                    height=400
-                )
-                placeholder.plotly_chart(fig, use_container_width=True)
-            else:
-                placeholder.write(f"{r['Layer']} → SN = {total_anim}")
-
-            time.sleep(0.8)
-
-    # =========================
-    # STACK GRAPH
-    # =========================
-    st.subheader("SN Stack")
+    colors = ["#000000","#3498DB","#8E5A2B","#F4D03F"]
+    text_colors = ["white","black","white","black"]
 
     if PLOTLY_OK:
-        fig2 = go.Figure()
-        for i, r in edited.iterrows():
-            fig2.add_trace(go.Bar(
-                name=r["Layer"],
-                x=["SN"],
-                y=[SN_list[i]]
-            ))
-        fig2.update_layout(barmode='stack')
-        st.plotly_chart(fig2, use_container_width=True)
-    else:
-        st.bar_chart(pd.DataFrame({"SN":SN_list}))
 
-    # =========================
-    # SECTION VIEW (🔥 เพิ่มล่าสุด)
-    # =========================
-    st.subheader("🧱 Pavement Section (Top → Bottom)")
+        fig = go.Figure()
+        y_base=0
 
-    colors = ["#000000", "#3498DB", "#8E5A2B", "#F4D03F"]
-    text_colors = ["white", "black", "white", "black"]
+        for i,r in edited.iterrows():
+            t=r["D(cm)"]
 
-    if PLOTLY_OK:
-        fig3 = go.Figure()
-        y_base = 0
-
-        for i, r in edited.iterrows():
-            t = r["D(cm)"]
-
-            fig3.add_trace(go.Bar(
-                x=[0],
-                y=[t],
-                base=y_base,
+            fig.add_trace(go.Bar(
+                x=[0], y=[t], base=y_base,
                 marker_color=colors[i],
-                width=0.6,
-                text=f"D{i+1}<br>{r['Layer']}<br>{t} cm",
+                text=f"{r['Layer']}<br>{t} cm",
                 textposition="inside",
-                textfont=dict(color=text_colors[i]),
-                hovertemplate=(
-                    f"<b>{r['Layer']}</b><br>"
-                    f"Thickness: {t} cm<br>"
-                    f"SN: {SN_list[i]}<br>"
-                    f"Cumulative SN: {cum_SN[i]}"
-                    "<extra></extra>"
-                )
+                textfont=dict(color=text_colors[i])
             ))
 
-            y_base += t
+            # dimension
+            fig.add_shape(type="line", x0=0.6,x1=0.9,y0=y_base,y1=y_base)
+            fig.add_shape(type="line", x0=0.6,x1=0.9,y0=y_base+t,y1=y_base+t)
+            fig.add_shape(type="line", x0=0.75,x1=0.75,y0=y_base,y1=y_base+t)
 
-        fig3.update_layout(
-            height=600,
-            showlegend=False,
+            fig.add_annotation(
+                x=1.1, y=y_base+t/2,
+                text=f"D{i+1}={t} cm",
+                showarrow=False
+            )
+
+            y_base+=t
+
+        # total depth
+        fig.add_shape(type="line", x0=1.5,x1=1.5,y0=0,y1=depth, line=dict(width=3))
+        fig.add_annotation(x=1.7,y=depth/2,
+                           text=f"Total={depth} cm",
+                           showarrow=False)
+
+        fig.update_layout(
+            height=700,
+            yaxis=dict(autorange="reversed"),
             xaxis=dict(visible=False),
-            yaxis=dict(title="Depth (cm)", autorange="reversed"),
-            plot_bgcolor="#111111"
+            showlegend=False
         )
 
-        st.plotly_chart(fig3, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
 
     else:
-        for i, r in edited.iterrows():
-            st.markdown(
-                f"<div style='background:{colors[i]};color:{text_colors[i]};padding:15px;margin:5px'>{r['Layer']} {r['D(cm)']} cm</div>",
-                unsafe_allow_html=True
-            )
+        st.warning("No plotly → simple view")
+
+    # =========================
+    # PDF REPORT
+    # =========================
+    st.subheader("📄 Export Report")
+
+    if PDF_OK:
+        if st.button("Generate Report"):
+
+            doc = SimpleDocTemplate("report.pdf")
+            styles = getSampleStyleSheet()
+            content=[]
+
+            content.append(Paragraph("AASHTO 1993 DESIGN REPORT", styles['Title']))
+            content.append(PageBreak())
+
+            content.append(Paragraph(f"W18={W18}", styles['Normal']))
+            content.append(PageBreak())
+
+            content.append(Paragraph(f"SN Required={SN_req}", styles['Normal']))
+            content.append(PageBreak())
+
+            content.append(Paragraph("Layer Table", styles['Heading2']))
+            content.append(PageBreak())
+
+            if PLOTLY_OK:
+                img_path="section.png"
+                pio.write_image(fig,img_path,width=800,height=600)
+                content.append(Image(img_path, width=400,height=300))
+                content.append(PageBreak())
+
+            for i in range(5):
+                content.append(Paragraph(f"Analysis Page {i+1}", styles['Normal']))
+                content.append(PageBreak())
+
+            doc.build(content)
+
+            with open("report.pdf","rb") as f:
+                st.download_button("Download PDF", f)
+
+    else:
+        st.warning("Install reportlab for PDF")
 
 # =========================
 # RIGID
@@ -224,6 +226,5 @@ else:
 
     D = calc_rigid(W18, ZR, So, Sc, Cd, J, k)
 
-    c1,c2 = st.columns(2)
-    c1.metric("Thickness (inch)", D)
-    c2.metric("Thickness (cm)", round(D*2.54,2))
+    st.metric("Thickness (inch)", D)
+    st.metric("Thickness (cm)", round(D*2.54,2))
