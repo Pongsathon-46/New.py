@@ -1,26 +1,60 @@
+
 # ==============================================
-# AASHTO 1993 ENTERPRISE VERSION (FULL FEATURES)
+# AASHTO 1993 ENTERPRISE (DEPLOY READY)
 # ==============================================
 
 import streamlit as st
 import math
-import matplotlib.pyplot as plt
 import pandas as pd
+import sqlite3
+import json
+import os
 
 # =========================
-# LOGIN SYSTEM
+# PAGE CONFIG
 # =========================
+st.set_page_config(page_title="AASHTO 1993", layout="wide")
+
+# =========================
+# DATABASE
+# =========================
+conn = sqlite3.connect("projects.db", check_same_thread=False)
+c = conn.cursor()
+
+c.execute("""
+CREATE TABLE IF NOT EXISTS projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    data TEXT
+)
+""")
+conn.commit()
+
+# =========================
+# SAFE IMPORT MATPLOTLIB
+# =========================
+try:
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_OK = True
+except:
+    MATPLOTLIB_OK = False
+
+# =========================
+# LOGIN (ENV SAFE)
+# =========================
+USER = os.getenv("APP_USER", "admin")
+PASS = os.getenv("APP_PASS", "1234")
 
 if "login" not in st.session_state:
     st.session_state.login = False
 
 if not st.session_state.login:
     st.title("Login")
-    user = st.text_input("Username")
-    pwd = st.text_input("Password", type="password")
+    u = st.text_input("Username")
+    p = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        if user == "admin" and pwd == "1234":
+        if u == USER and p == PASS:
             st.session_state.login = True
             st.rerun()
         else:
@@ -28,15 +62,8 @@ if not st.session_state.login:
     st.stop()
 
 # =========================
-# CONFIG
-# =========================
-
-st.set_page_config(layout="wide")
-
-# =========================
 # FUNCTIONS
 # =========================
-
 def reliability_to_zr(R):
     table = {50:0.0,60:-0.253,70:-0.524,75:-0.674,80:-0.841,85:-1.036,90:-1.282,95:-1.645,99:-2.327}
     return table[R]
@@ -56,8 +83,7 @@ def calc_SN(W18, ZR, So, dPSI, MR):
 # =========================
 # SIDEBAR
 # =========================
-
-st.sidebar.title("AASHTO 1993 PRO")
+st.sidebar.title("AASHTO 1993")
 mode = st.sidebar.radio("Mode", ["Flexible","Rigid"])
 
 W18 = st.sidebar.number_input("W18", value=5000000.0)
@@ -71,16 +97,11 @@ ZR = reliability_to_zr(R)
 dPSI = Pi - Pt
 MR = MR_from_CBR(CBR)
 
-# =========================
-# TABS
-# =========================
-
 tab1, tab2 = st.tabs(["Design","Sensitivity"])
 
 # =========================
-# DESIGN TAB
+# DESIGN
 # =========================
-
 with tab1:
 
     col1,col2,col3,col4 = st.columns(4)
@@ -95,14 +116,9 @@ with tab1:
     ]
 
     df = pd.DataFrame(data, columns=["Layer","a","m","D(cm)","Use"])
-
     edited = st.data_editor(df, use_container_width=True)
 
-    SN_prov = 0
-    for _,r in edited.iterrows():
-        if r["Use"]:
-            SN_prov += r["a"]*r["m"]*r["D(cm)"]
-
+    SN_prov = sum([r["a"]*r["m"]*r["D(cm)"] for _,r in edited.iterrows() if r["Use"]])
     total_thickness = edited["D(cm)"].sum()
 
     col1.metric("SN Required", SN_req)
@@ -110,66 +126,67 @@ with tab1:
     col3.metric("Thickness", round(total_thickness,1))
     col4.metric("W18", f"{W18:,.0f}")
 
-    # SECTION (COLOR MATCH)
-    colors = ["black","#5DADE2","#8E5A2B","#D4A017"]
-
-    fig, ax = plt.subplots()
-    y=0
-
-    for i,r in edited.iterrows():
-        ax.bar(0, r["D(cm)"], bottom=y)
-        ax.text(0, y+r["D(cm)"]/2, f"{r['D(cm)']} cm", ha='center', color='white')
-        ax.text(0.6, y+r["D(cm)"], f"D{i+1}")
-        y+=r["D(cm)"]
-
-    ax.set_xlim(-1,1)
-    ax.set_xticks([])
-    ax.invert_yaxis()
-
-    st.pyplot(fig)
+    # SECTION
+    if MATPLOTLIB_OK:
+        fig, ax = plt.subplots()
+        y=0
+        for i,r in edited.iterrows():
+            ax.bar(0, r["D(cm)"], bottom=y)
+            ax.text(0, y+r["D(cm)"]/2, f"{r['D(cm)']} cm", ha='center', color='white')
+            ax.text(0.6, y+r["D(cm)"], f"D{i+1}")
+            y+=r["D(cm)"]
+        ax.set_xlim(-1,1)
+        ax.set_xticks([])
+        ax.invert_yaxis()
+        st.pyplot(fig)
+    else:
+        st.warning("No matplotlib - fallback view")
+        for i,r in edited.iterrows():
+            st.progress(min(int(r["D(cm)"]*2),100), text=f"{r['Layer']} {r['D(cm)']} cm")
 
 # =========================
-# SENSITIVITY TAB
+# SENSITIVITY
 # =========================
-
 with tab2:
 
-    st.subheader("Sensitivity Analysis")
-
     W_range = range(1000000,10000000,1000000)
-    SN_list = []
+    SN_list = [calc_SN(w, ZR, So, dPSI, MR) for w in W_range]
 
-    for w in W_range:
-        SN_list.append(calc_SN(w, ZR, So, dPSI, MR))
-
-    fig2, ax2 = plt.subplots()
-    ax2.plot(list(W_range), SN_list)
-    ax2.set_xlabel("W18")
-    ax2.set_ylabel("SN")
-
-    st.pyplot(fig2)
+    if MATPLOTLIB_OK:
+        fig2, ax2 = plt.subplots()
+        ax2.plot(list(W_range), SN_list)
+        st.pyplot(fig2)
+    else:
+        st.line_chart({"SN": SN_list})
 
 # =========================
 # SAVE PROJECT
 # =========================
+name = st.text_input("Project Name")
 
 if st.button("Save Project"):
-    st.success("Saved (mock)")
+    c.execute("INSERT INTO projects (name,data) VALUES (?,?)", (name, json.dumps(edited.to_dict())))
+    conn.commit()
+    st.success("Saved to database")
+
+# LOAD
+if st.button("Load Projects"):
+    rows = c.execute("SELECT * FROM projects").fetchall()
+    st.write(rows)
 
 # =========================
-# PDF REPORT (ADVANCED)
+# PDF REPORT
 # =========================
-
 try:
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
     from reportlab.lib.styles import getSampleStyleSheet
 
-    if st.button("Export Full Report"):
-        doc = SimpleDocTemplate("full_report.pdf")
+    if st.button("Export Report"):
+        doc = SimpleDocTemplate("report.pdf")
         styles = getSampleStyleSheet()
 
         content = []
-        content.append(Paragraph("AASHTO 1993 DESIGN REPORT", styles['Title']))
+        content.append(Paragraph("AASHTO 1993 REPORT", styles['Title']))
         content.append(Spacer(1,12))
 
         for i in range(10):
@@ -179,8 +196,14 @@ try:
 
         doc.build(content)
 
-        with open("full_report.pdf","rb") as f:
+        with open("report.pdf","rb") as f:
             st.download_button("Download PDF", f)
 
 except:
-    st.warning("Install reportlab for full report")
+    st.warning("Install reportlab for PDF")
+    [theme]
+base="dark"
+primaryColor="#00C853"
+backgroundColor="#0E1117"
+secondaryBackgroundColor="#161A23"
+textColor="#FFFFFF"
