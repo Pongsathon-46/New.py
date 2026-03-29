@@ -90,23 +90,17 @@ if mode == "Flexible":
 
     st.title("Flexible Pavement")
 
-    data = [
+    df = pd.DataFrame([
         ["AC",0.44,1.0,20.0,True],
         ["Base",0.14,1.1,20.0,True],
         ["Subbase",0.11,1.1,10.0,True],
         ["Subgrade",0.10,1.0,10.0,True],
-    ]
+    ], columns=["Layer","a","m","D(cm)","Use"])
 
-    df = pd.DataFrame(data, columns=["Layer","a","m","D(cm)","Use"])
     edited = st.data_editor(df, use_container_width=True)
 
-    total = 0
-    depth = 0
-
-    for _,r in edited.iterrows():
-        if r["Use"]:
-            total += r["a"]*r["m"]*r["D(cm)"]
-        depth += r["D(cm)"]
+    total = sum(r["a"]*r["m"]*r["D(cm)"] for _,r in edited.iterrows() if r["Use"])
+    depth = edited["D(cm)"].sum()
 
     st.metric("SN Required", SN_req)
     st.metric("SN Provided", round(total,3))
@@ -116,7 +110,6 @@ if mode == "Flexible":
 
     colors = ["#000000","#3498DB","#8E5A2B","#F4D03F"]
 
-    # ---------- Plotly ----------
     if PLOTLY_OK:
         fig = go.Figure()
         y=0
@@ -136,7 +129,6 @@ if mode == "Flexible":
                           xaxis=dict(visible=False))
         st.plotly_chart(fig, use_container_width=True)
 
-    # ---------- HTML fallback ----------
     else:
         html = "<div style='width:220px;margin:auto;border:2px solid black;'>"
 
@@ -144,7 +136,10 @@ if mode == "Flexible":
             h = r["D(cm)"] * 3
             display_h = max(h, 40)
 
-            label = "" if h < 40 else f"{r['Layer']}<br>{r['D(cm)']} cm"
+            # 🔥 auto font scale
+            font_size = max(9, min(14, int(h/3)))
+
+            label = f"{r['Layer']}<br>{r['D(cm)']} cm"
 
             html += f"""
 <div style="
@@ -155,7 +150,8 @@ if mode == "Flexible":
     align-items:center;
     justify-content:center;
     border-bottom:1px solid white;
-    font-size:14px;
+    font-size:{font_size}px;
+    line-height:1.2;
     text-align:center;">
 {label}
 </div>
@@ -196,19 +192,15 @@ else:
 
     if PLOTLY_OK:
         fig = go.Figure()
-        y = 0
-        for i, r in df_layer.iterrows():
-            y0, y1 = y, y + r["D(cm)"]
+        y=0
+        for i,r in df_layer.iterrows():
+            fig.add_shape(type="rect", x0=0, x1=1, y0=y, y1=y+r["D(cm)"],
+                          fillcolor=colors[i], line=dict(color="black"))
 
-            fig.add_shape(type="rect", x0=0, x1=1, y0=y0, y1=y1,
-                          fillcolor=colors[i % len(colors)],
-                          line=dict(color="black"))
-
-            fig.add_annotation(x=0.5, y=(y0+y1)/2,
+            fig.add_annotation(x=0.5, y=y+r["D(cm)"]/2,
                                text=f"{r['Layer']}<br>{r['D(cm)']} cm",
                                showarrow=False)
-
-            y = y1
+            y+=r["D(cm)"]
 
         fig.update_layout(height=650,
                           yaxis=dict(autorange="reversed"),
@@ -222,16 +214,20 @@ else:
             h = r["D(cm)"] * 3
             display_h = max(h, 40)
 
-            label = "" if h < 40 else f"{r['Layer']}<br>{r['D(cm)']} cm"
+            font_size = max(9, min(14, int(h/3)))
+
+            label = f"{r['Layer']}<br>{r['D(cm)']} cm"
 
             html += f"""
 <div style="
-    background:{colors[i % len(colors)]};
+    background:{colors[i]};
     height:{display_h}px;
     display:flex;
     align-items:center;
     justify-content:center;
-    border-bottom:1px solid white;">
+    border-bottom:1px solid white;
+    font-size:{font_size}px;
+    line-height:1.2;">
 {label}
 </div>
 """
@@ -242,5 +238,6 @@ else:
         st.markdown(html, unsafe_allow_html=True)
 
     st.subheader("📊 Iteration Table")
-    df_steps = pd.DataFrame(steps, columns=["Step","D (inch)","logW","Error"])
-    st.dataframe(df_steps, use_container_width=True)
+    st.dataframe(pd.DataFrame(steps,
+        columns=["Step","D (inch)","logW","Error"]),
+        use_container_width=True)
