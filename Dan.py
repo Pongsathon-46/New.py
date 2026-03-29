@@ -191,3 +191,80 @@ else:
     c3.metric("k-value", k)
 
     st.info("Rigid design uses AASHTO 1993 iterative equation")
+# =========================
+# LAYER SECTION (VERTICAL)
+# =========================
+st.subheader("Layer Section (Top → Bottom)")
+
+colors = ["#000000", "#3498DB", "#8E5A2B", "#F4D03F"]
+text_colors = ["white", "black", "white", "black"]
+
+if PLOTLY_OK:
+
+    import plotly.graph_objects as go
+
+    fig = go.Figure()
+
+    y_base = 0
+
+    for i, r in edited.iterrows():
+
+        thickness = r["D(cm)"]
+
+        fig.add_trace(go.Bar(
+            x=[0],
+            y=[thickness],
+            base=y_base,
+            marker_color=colors[i],
+            width=0.6,
+            text=f"D{i+1}<br>{r['Layer']}<br>{thickness} cm",
+            textposition="inside",
+            textfont=dict(size=14, color=text_colors[i]),
+            hovertemplate=(
+                f"<b>{r['Layer']}</b><br>"
+                f"Thickness: {thickness} cm<br>"
+                f"SN: {round(SN_list[i],3)}<br>"
+                f"Cumulative SN: {round(cum_SN[i],3)}"
+                "<extra></extra>"
+            )
+        ))
+
+        y_base += thickness
+
+    fig.update_layout(
+        height=600,
+        showlegend=False,
+        xaxis=dict(visible=False),
+        yaxis=dict(
+            title="Depth (cm)",
+            autorange="reversed"  # 🔥 สำคัญ → บนลงล่าง
+        ),
+        margin=dict(l=40, r=40, t=40, b=20),
+        plot_bgcolor="#111111"
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+# =========================
+# FALLBACK (ไม่มี plotly)
+# =========================
+else:
+
+    st.warning("Fallback Section View")
+
+    for i, r in edited.iterrows():
+        st.markdown(
+            f"""
+            <div style="
+                background:{colors[i]};
+                color:{text_colors[i]};
+                padding:15px;
+                margin:5px 0;
+                border-radius:8px;
+                font-weight:bold;
+            ">
+            D{i+1} : {r['Layer']} — {r['D(cm)']} cm
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
