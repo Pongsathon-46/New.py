@@ -21,28 +21,6 @@ st.set_page_config(
 )
 
 # =========================
-# LOGIN (ใช้ ENV สำหรับ Cloud)
-# =========================
-USER = os.getenv("APP_USER", "admin")
-PASS = os.getenv("APP_PASS", "1234")
-
-if "login" not in st.session_state:
-    st.session_state.login = False
-
-if not st.session_state.login:
-    st.title("Login")
-    user = st.text_input("Username")
-    pwd = st.text_input("Password", type="password")
-
-    if st.button("Login"):
-        if user == USER and pwd == PASS:
-            st.session_state.login = True
-            st.rerun()
-        else:
-            st.error("Wrong credentials")
-    st.stop()
-
-# =========================
 # FUNCTIONS
 # =========================
 def reliability_to_zr(R):
