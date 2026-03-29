@@ -152,23 +152,39 @@ if mode == "Flexible":
         ax.invert_yaxis()
         st.pyplot(fig)
 
-    # ---------- HTML (FIXED) ----------
-    else:
-        html = ""
+   # ---------- HTML (FIXED + NO OVERLAP) ----------
+else:
+    html = "<div style='width:220px;margin:auto;border:2px solid black;'>"
 
-        for i, r in edited.iterrows():  # ✅ FIX
-            html += f"<div style='background:{colors[i]}; height:{r['D(cm)']*3}px; color:white; display:flex; align-items:center; justify-content:center;'>"
-            html += f"{r['Layer']}<br>{r['D(cm)']} cm"
-            html += "</div>"
+    for i, r in df_layer.iterrows():
 
-        html = f"""
-<div style='width:200px;margin:auto;border:2px solid black;'>
-{html}
-</div>
-<div style='text-align:center;margin-top:10px;'>
-Total = {round(depth,1)} cm
+        h = r["D(cm)"] * 3
+        display_h = max(h, 40)
+
+        if h < 40:
+            label = ""
+        else:
+            label = f"{r['Layer']}<br>{r['D(cm)']} cm"
+
+        html += f"""
+<div style="
+    background:{colors[i]};
+    height:{display_h}px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    border-bottom:1px solid white;
+    font-size:14px;
+    text-align:center;
+">
+{label}
 </div>
 """
+
+    html += "</div>"
+    html += f"<div style='text-align:center'>Total = {round(total_depth,1)} cm</div>"
+
+    st.markdown(html, unsafe_allow_html=True)
         st.markdown(html, unsafe_allow_html=True)
 
 # =========================
