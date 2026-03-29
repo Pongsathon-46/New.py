@@ -1,36 +1,15 @@
 import streamlit as st
 import math
 import pandas as pd
+import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="AASHTO 1993 PRO", layout="wide")
 
-st.title("AASHTO 1993 Pavement Design (Professional)")
-
 # -----------------------------
-# Sidebar Inputs
+# Helper Functions
 # -----------------------------
-st.sidebar.header("Input Parameters")
 
-W18 = st.sidebar.number_input("ESAL (W18)", value=1e6, format="%.0f")
-ZR = st.sidebar.number_input("Zr", value=-1.645)
-So = st.sidebar.number_input("So", value=0.45)
-delta_PSI = st.sidebar.number_input("ΔPSI", value=1.7)
-Mr = st.sidebar.number_input("Mr (psi)", value=8000.0)
-
-st.sidebar.markdown("---")
-st.sidebar.header("Layer Coefficients")
-
-a1 = st.sidebar.number_input("a1 (Asphalt)", value=0.44)
-a2 = st.sidebar.number_input("a2 (Base)", value=0.14)
-a3 = st.sidebar.number_input("a3 (Subbase)", value=0.11)
-
-m2 = st.sidebar.number_input("m2 (Drainage Base)", value=1.0)
-m3 = st.sidebar.number_input("m3 (Drainage Subbase)", value=1.0)
-
-# -----------------------------
-# AASHTO Equation Function
-# -----------------------------
-def aashto_sn(SN):
+def aashto_sn_eq(SN, ZR, So, delta_PSI, Mr):
     return (
         ZR * So
         + 9.36 * math.log10(SN + 1)
@@ -41,69 +20,133 @@ def aashto_sn(SN):
         - 8.07
     )
 
-# -----------------------------
-# Iterative Solve SN
-# -----------------------------
-def solve_sn():
-    SN = 1.0
+
+def solve_sn(W18, ZR, So, delta_PSI, Mr):
+    SN = 2.0
     for _ in range(100):
-        f = aashto_sn(SN) - math.log10(W18)
-        df = (aashto_sn(SN + 0.001) - aashto_sn(SN)) / 0.001
-        SN = SN - f / df
-        if abs(f) < 1e-5:
+        f = aashto_sn_eq(SN, ZR, So, delta_PSI, Mr) - math.log10(W18)
+        df = (aashto_sn_eq(SN+0.001, ZR, So, delta_PSI, Mr) - aashto_sn_eq(SN, ZR, So, delta_PSI, Mr)) / 0.001
+        SN = SN - f/df
+        if abs(f) < 1e-6:
             break
     return SN
 
-if st.button("Calculate SN"):
-    SN = solve_sn()
-    st.success(f"SN = {round(SN,3)}")
 
-    st.subheader("Layer Thickness Design")
+def round_construct(x_cm):
+    return math.ceil(x_cm/5)*5
 
-    # Assume practical layer thickness
-    D1 = SN / a1
-    SN2 = SN - a1 * D1
+# -----------------------------
+# UI Layout
+# -----------------------------
 
-    D2 = max(SN2 / (a2 * m2), 0)
-    SN3 = SN2 - a2 * m2 * D2
+st.title("AASHTO 1993 Pavement Design (PRO)")
 
-    D3 = max(SN3 / (a3 * m3), 0)
+tab1, tab2 = st.tabs(["Flexible Pavement", "Rigid Pavement"])
 
-    df = pd.DataFrame({
-        "Layer": ["Asphalt", "Base", "Subbase"],
-        "Thickness (in)": [D1, D2, D3]
-    })
+# =============================
+# FLEXIBLE
+# =============================
+with tab1:
+    st.header("Flexible Pavement")
 
-    st.dataframe(df)
+    col1, col2 = st.columns(2)
 
-    # -----------------------------
-    # Graph
-    # -----------------------------
-    st.subheader("SN vs Thickness")
+    with col1:
+        W18 = st.number_input("ESAL", value=1e6)
+        So = st.number_input("So", value=0.45)
+        delta_PSI = st.number_input("ΔPSI", value=1.7)
+        Mr = st.number_input("Mr (psi)", value=8000.0)
 
-    SN_values = []
-    thickness = []
+    with col2:
+        a1 = st.number_input("a1", value=0.44)
+        a2 = st.number_input("a2", value=0.14)
+        a3 = st.number_input("a3", value=0.11)
+        m2 = st.number_input("m2", value=1.0)
+        m3 = st.number_input("m3", value=1.0)
 
-    for d in range(1, 20):
-        sn_temp = a1*d
-        SN_values.append(sn_temp)
-        thickness.append(d)
+    scenarios = {
+        "90%": -1.282,
+        "95%": -1.645,
+        "99%": -2.327
+    }
 
-    import matplotlib.pyplot as plt
+    results = []
 
-    plt.figure()
-    plt.plot(thickness, SN_values)
-    plt.xlabel("Thickness (in)")
-    plt.ylabel("SN")
-    plt.title("Asphalt Contribution to SN")
+    if st.button("Run Design"):
+        for key, ZR in scenarios.items():
+            SN_req = solve_sn(W18, ZR, So, delta_PSI, Mr)
 
-    st.pyplot(plt)
+            # thickness (cm)
+            D1 = SN_req / a1 * 2.54
+            D2 = (SN_req*0.6) / (a2*m2) * 2.54
+            D3 = (SN_req*0.4) / (a3*m3) * 2.54
 
-    # -----------------------------
-    # Export Excel
-    # -----------------------------
-    excel_file = "pavement_design.xlsx"
-    df.to_excel(excel_file, index=False)
+            # minimum thickness constraint
+            D1 = max(D1, 7.5)
+            D2 = max(D2, 10)
+            D3 = max(D3, 15)
 
-    with open(excel_file, "rb") as f:
-        st.download_button("Download Excel", f, file_name=excel_file)
+            # rounding
+            D1 = round_construct(D1)
+            D2 = round_construct(D2)
+            D3 = round_construct(D3)
+
+            SN_ach = a1*(D1/2.54) + a2*m2*(D2/2.54) + a3*m3*(D3/2.54)
+
+            results.append([key, SN_req, SN_ach, D1, D2, D3])
+
+        df = pd.DataFrame(results, columns=["Reliability","SN_required","SN_achieved","D1(cm)","D2(cm)","D3(cm)"])
+
+        st.subheader("Summary Table")
+        st.dataframe(df)
+
+        # Plot layer thickness
+        st.subheader("Layer Thickness Visualization")
+        fig, ax = plt.subplots()
+        labels = ["D1","D2","D3"]
+        values = [D1, D2, D3]
+        ax.bar(labels, values)
+        ax.set_ylabel("cm")
+        st.pyplot(fig)
+
+        # Export
+        df.to_excel("flexible_design.xlsx", index=False)
+        with open("flexible_design.xlsx","rb") as f:
+            st.download_button("Download Excel", f)
+
+# =============================
+# RIGID
+# =============================
+with tab2:
+    st.header("Rigid Pavement (Jointed Concrete)")
+
+    W18 = st.number_input("ESAL ", value=1e6, key="r1")
+    ZR = st.number_input("Zr ", value=-1.645, key="r2")
+    So = st.number_input("So ", value=0.35, key="r3")
+    delta_PSI = st.number_input("ΔPSI ", value=1.5, key="r4")
+    Sc = st.number_input("Sc (psi)", value=650.0)
+    Ec = st.number_input("Ec (psi)", value=4e6)
+    k = st.number_input("k-value", value=100.0)
+
+    if st.button("Design Rigid Pavement"):
+        # simplified full-form logic trend
+        D = (
+            (math.log10(W18) + ZR*So) /
+            (1 + (1e7/(Sc**2)))
+        )
+
+        D_cm = round_construct(D*2.54)
+
+        st.subheader("Result")
+        st.success(f"Thickness ≈ {D_cm} cm")
+
+        # visualization
+        fig, ax = plt.subplots()
+        ax.bar(["Slab"],[D_cm])
+        ax.set_ylabel("cm")
+        st.pyplot(fig)
+
+        df = pd.DataFrame([[D_cm]], columns=["Thickness(cm)"])
+        df.to_excel("rigid.xlsx", index=False)
+        with open("rigid.xlsx","rb") as f:
+            st.download_button("Download Excel", f)
