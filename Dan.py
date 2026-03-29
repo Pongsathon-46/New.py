@@ -208,8 +208,7 @@ else:
     colors = ["#BDC3C7", "#8E5A2B", "#F4D03F"]
 
     total_depth = df_layer["D(cm)"].sum()
-
-    # ---------- Plotly ----------
+    # ---------- Plotly (IMPROVED SECTION VIEW) ----------
     if PLOTLY_OK:
 
         fig = go.Figure()
@@ -217,44 +216,73 @@ else:
 
         for i, r in df_layer.iterrows():
 
-            fig.add_trace(go.Bar(
-                x=[0],
-                y=[r["D(cm)"]],
-                base=y,
-                marker_color=colors[i],
-                text=f"{r['Layer']}<br>{r['D(cm)']} cm",
-                textposition="inside"
-            ))
+            y0 = y
+            y1 = y + r["D(cm)"]
 
-            # dimension line
-            fig.add_shape(type="line",
-                          x0=0.6, x1=0.9,
-                          y0=y, y1=y)
+            # 🔹 วาด layer เป็น block จริง
+            fig.add_shape(
+                type="rect",
+                x0=0, x1=1,
+                y0=y0, y1=y1,
+                fillcolor=colors[i],
+                line=dict(color="black")
+            )
 
-            fig.add_shape(type="line",
-                          x0=0.6, x1=0.9,
-                          y0=y+r["D(cm)"], y1=y+r["D(cm)"])
-
+            # 🔹 ข้อความกลาง layer
             fig.add_annotation(
-                x=1.1,
-                y=y + r["D(cm)"]/2,
+                x=0.5,
+                y=(y0 + y1)/2,
+                text=f"{r['Layer']}<br>{r['D(cm)']} cm",
+                showarrow=False,
+                font=dict(color="black", size=14)
+            )
+
+            # 🔹 เส้น dimension บน
+            fig.add_shape(
+                type="line",
+                x0=1.1, x1=1.2,
+                y0=y0, y1=y0,
+                line=dict(color="black")
+            )
+
+            # 🔹 เส้น dimension ล่าง
+            fig.add_shape(
+                type="line",
+                x0=1.1, x1=1.2,
+                y0=y1, y1=y1,
+                line=dict(color="black")
+            )
+
+            # 🔹 เส้นแนวตั้ง (บอกความหนา)
+            fig.add_shape(
+                type="line",
+                x0=1.15, x1=1.15,
+                y0=y0, y1=y1,
+                line=dict(color="black", dash="dot")
+            )
+
+            # 🔹 label ความหนา
+            fig.add_annotation(
+                x=1.3,
+                y=(y0 + y1)/2,
                 text=f"{r['D(cm)']} cm",
                 showarrow=False
             )
 
-            y += r["D(cm)"]
+            y = y1
 
-        # total depth
+        # 🔹 total depth
         fig.add_annotation(
-            x=1.5,
-            y=total_depth/2,
-            text=f"Total = {round(total_depth,1)} cm",
-            showarrow=False
+            x=0.5,
+            y=total_depth + 5,
+            text=f"Total Depth = {round(total_depth,1)} cm",
+            showarrow=False,
+            font=dict(size=16)
         )
 
         fig.update_layout(
-            height=600,
-            yaxis=dict(autorange="reversed"),
+            height=650,
+            yaxis=dict(autorange="reversed", title="Depth (cm)"),
             xaxis=dict(visible=False),
             showlegend=False
         )
