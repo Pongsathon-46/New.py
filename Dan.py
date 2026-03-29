@@ -159,21 +159,25 @@ if mode == "Flexible":
         st.pyplot(fig)
 
     # ✅ HTML (สุดท้าย)
-    else:
-        html = ""
-        for i,r in edited.iterrows():
-            html += f"""
-            <div style="background:{colors[i]};
-                        height:{r['D(cm)']*3}px;
-                        color:white;
-                        display:flex;
-                        align-items:center;
-                        justify-content:center;">
-            {r['Layer']} {r['D(cm)']} cm
-            </div>
-            """
-        st.markdown(html, unsafe_allow_html=True)
+   else:
 
+    html = ""
+
+    for i, r in df_layer.iterrows():
+        html += f"<div style='background:{colors[i]}; height:{r['D(cm)']*3}px; color:black; display:flex; align-items:center; justify-content:center; border-bottom:1px solid white;'>"
+        html += f"{r['Layer']}<br>{r['D(cm)']} cm"
+        html += "</div>"
+
+    html = f"""
+    <div style='width:200px;margin:auto;border:2px solid black;'>
+    {html}
+    </div>
+    <div style='text-align:center;margin-top:10px;'>
+    Total = {round(total_depth,1)} cm
+    </div>
+    """
+
+    st.markdown(html, unsafe_allow_html=True)
 # =========================
 # RIGID (เพิ่ม Section View)
 # =========================
