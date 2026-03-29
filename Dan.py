@@ -228,3 +228,84 @@ else:
 
     st.metric("Thickness (inch)", D)
     st.metric("Thickness (cm)", round(D*2.54,2))
+# =========================
+# 🎬 CONSTRUCTION ANIMATION
+# =========================
+st.subheader("🎬 Construction Animation (Layer Build-Up)")
+
+colors = ["#000000","#3498DB","#8E5A2B","#F4D03F"]
+text_colors = ["white","black","white","black"]
+
+speed = st.slider("Animation Speed (sec)", 0.2, 2.0, 0.8)
+
+if st.button("▶ Start Construction"):
+
+    placeholder = st.empty()
+
+    built_depth = 0
+
+    for i, r in edited.iterrows():
+
+        t = r["D(cm)"]
+
+        # animation step (แบ่งย่อยให้ไหล)
+        steps = 10
+        step_thickness = t / steps
+
+        for s in range(steps):
+
+            if PLOTLY_OK:
+
+                import plotly.graph_objects as go
+                fig = go.Figure()
+
+                y_base = 0
+
+                # วาด layer ก่อนหน้า (เต็มแล้ว)
+                for j in range(i):
+                    prev_t = edited.iloc[j]["D(cm)"]
+                    fig.add_trace(go.Bar(
+                        x=[0],
+                        y=[prev_t],
+                        base=y_base,
+                        marker_color=colors[j],
+                        text=f"{edited.iloc[j]['Layer']}",
+                        textposition="inside",
+                        textfont=dict(color=text_colors[j])
+                    ))
+                    y_base += prev_t
+
+                # วาด layer ปัจจุบัน (กำลังไหล)
+                current_height = step_thickness * (s+1)
+
+                fig.add_trace(go.Bar(
+                    x=[0],
+                    y=[current_height],
+                    base=y_base,
+                    marker_color=colors[i],
+                    text=f"{r['Layer']}",
+                    textposition="inside",
+                    textfont=dict(color=text_colors[i])
+                ))
+
+                fig.update_layout(
+                    height=600,
+                    yaxis=dict(autorange="reversed"),
+                    xaxis=dict(visible=False),
+                    showlegend=False,
+                    title=f"Building: {r['Layer']}"
+                )
+
+                placeholder.plotly_chart(fig, use_container_width=True)
+
+            else:
+                # fallback text animation
+                placeholder.write(
+                    f"Building {r['Layer']}... {round((s+1)/steps*100)}%"
+                )
+
+            time.sleep(speed/steps)
+
+        built_depth += t
+
+    st.success("Construction Complete ✅")
