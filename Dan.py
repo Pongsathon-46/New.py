@@ -2,11 +2,13 @@ import streamlit as st
 import math
 import pandas as pd
 import random
+from reportlab.platypus import SimpleDocTemplate, Paragraph
+from reportlab.lib.styles import getSampleStyleSheet
 
-st.set_page_config(page_title="AASHTO 1993 PRO", layout="wide")
+st.set_page_config(page_title="AASHTO 1993 Pavement Design", layout="wide")
 
 # -----------------------------
-# AASHTO SOLVER (PRO)
+# AASHTO Solver (Stable + Debug)
 # -----------------------------
 def aashto_sn_eq(SN, ZR, So, delta_PSI, Mr):
     SN = max(SN, 0.01)
@@ -23,26 +25,37 @@ def aashto_sn_eq(SN, ZR, So, delta_PSI, Mr):
 def f_SN(SN, W18, ZR, So, delta_PSI, Mr):
     return aashto_sn_eq(SN, ZR, So, delta_PSI, Mr) - math.log10(W18)
 
-def solve_sn(W18, ZR, So, delta_PSI, Mr):
+def solve_sn_debug(W18, ZR, So, delta_PSI, Mr):
+    history = []
+
+    # Auto-fix
+    W18 = max(W18, 1e5)
+    Mr = max(Mr, 1000)
+    delta_PSI = max(delta_PSI, 1.5)
+
     low, high = 0.1, 10
 
-    while f_SN(low, W18, ZR, So, delta_PSI, Mr) * f_SN(high, W18, ZR, So, delta_PSI, Mr) > 0:
+    for _ in range(20):
+        if f_SN(low, W18, ZR, So, delta_PSI, Mr) * f_SN(high, W18, ZR, So, delta_PSI, Mr) <= 0:
+            break
         high *= 2
-        if high > 50:
-            return None
 
-    for _ in range(50):
+    for i in range(50):
         mid = (low + high) / 2
-        if f_SN(low, W18, ZR, So, delta_PSI, Mr) * f_SN(mid, W18, ZR, So, delta_PSI, Mr) < 0:
+        f_mid = f_SN(mid, W18, ZR, So, delta_PSI, Mr)
+        history.append({"iter": i, "SN": mid})
+        if f_SN(low, W18, ZR, So, delta_PSI, Mr) * f_mid < 0:
             high = mid
         else:
             low = mid
 
     SN = (low + high) / 2
 
-    for _ in range(20):
+    for i in range(20):
         f = f_SN(SN, W18, ZR, So, delta_PSI, Mr)
-        df = (f_SN(SN+0.001, W18, ZR, So, delta_PSI, Mr) - f) / 0.001
+        df = (f_SN(SN+0.001, W18, ZR, So, delta_PSI, Mr) - f)/0.001
+
+        history.append({"iter": i+50, "SN": SN})
 
         if abs(df) < 1e-8:
             break
@@ -56,21 +69,38 @@ def solve_sn(W18, ZR, So, delta_PSI, Mr):
 
         SN = SN_new
 
-    return SN
+    return SN, history
 
 def round_construct(x):
     return math.ceil(x/5)*5
 
 # -----------------------------
+# PDF Report
+# -----------------------------
+def generate_pdf(SN_req, SN_ach, D1, D2, D3):
+    doc = SimpleDocTemplate("report.pdf")
+    styles = getSampleStyleSheet()
+
+    content = []
+    content.append(Paragraph("AASHTO 1993 Pavement Design Report", styles['Title']))
+    content.append(Paragraph(f"SN Required: {SN_req:.2f}", styles['Normal']))
+    content.append(Paragraph(f"SN Achieved: {SN_ach:.2f}", styles['Normal']))
+    content.append(Paragraph(f"Asphalt (D1): {D1} cm", styles['Normal']))
+    content.append(Paragraph(f"Base (D2): {D2} cm", styles['Normal']))
+    content.append(Paragraph(f"Subbase (D3): {D3} cm", styles['Normal']))
+
+    doc.build(content)
+
+# -----------------------------
 # UI
 # -----------------------------
-st.title("AASHTO 1993 Pavement Design (PRO)")
+st.title("🚧 AASHTO 1993 Pavement Design (Student Version)")
 
-tab1, tab2 = st.tabs(["Flexible", "Rigid"])
+tab1, tab2 = st.tabs(["Flexible Pavement", "Rigid Pavement"])
 
 # ================= FLEXIBLE =================
 with tab1:
-    st.header("Flexible Pavement")
+    st.header("Flexible Pavement Design")
 
     col1, col2 = st.columns(2)
 
@@ -86,12 +116,9 @@ with tab1:
         a2 = st.number_input("a2", value=0.14)
         a3 = st.number_input("a3", value=0.11)
 
-    # Traffic growth
-    W18 = 0
-    for y in range(20):
-        W18 += AADT*((1+growth)**y)*365*0.8*0.3
-
-    st.write(f"W18 ≈ {round(W18,0):,.0f}")
+    # Traffic Growth
+    W18 = sum([AADT*((1+growth)**y)*365*0.8*0.3 for y in range(20)])
+    st.info(f"Total ESAL (W18) ≈ {round(W18,0):,}")
 
     # Drainage
     drainage = st.selectbox("Drainage", ["Poor","Fair","Good","Excellent"])
@@ -101,7 +128,7 @@ with tab1:
     if st.button("Run Design"):
 
         ZR = -1.645
-        SN_req = solve_sn(W18, ZR, So, delta_PSI, Mr)
+        SN_req, history = solve_sn_debug(W18, ZR, So, delta_PSI, Mr)
 
         D1 = round_construct(max(SN_req/a1*2.54, 7.5))
         D2 = round_construct(max(SN_req*0.6/(a2*m2)*2.54, 10))
@@ -109,48 +136,33 @@ with tab1:
 
         SN_ach = a1*(D1/2.54)+a2*m2*(D2/2.54)+a3*m3*(D3/2.54)
 
-        st.success(f"SN req = {SN_req:.2f} | SN ach = {SN_ach:.2f}")
+        st.success(f"SN Required = {SN_req:.2f} | SN Achieved = {SN_ach:.2f}")
 
         # Chart
-        df_chart = pd.DataFrame({"Thickness":[D1,D2,D3]},
-                                index=["Asphalt","Base","Subbase"])
-        st.bar_chart(df_chart)
+        st.bar_chart(pd.DataFrame({"Thickness":[D1,D2,D3]},
+                                 index=["Asphalt","Base","Subbase"]))
 
-        # SN vs ESAL
-        st.subheader("SN vs ESAL")
-        esal = [10**i for i in range(4,9)]
-        sn = [solve_sn(e, ZR, So, delta_PSI, Mr) for e in esal]
-        st.line_chart(pd.DataFrame(sn,index=esal))
+        # Convergence
+        st.subheader("Convergence Graph")
+        st.line_chart(pd.DataFrame([h["SN"] for h in history]))
 
-        # Monte Carlo
-        st.subheader("Monte Carlo")
-        sims = [solve_sn(W18, ZR, So,
-                        random.uniform(0.9,1.1)*delta_PSI,
-                        random.uniform(0.8,1.2)*Mr)
-                for _ in range(100)]
-        st.line_chart(pd.DataFrame(sims))
-
-        # Optimization
-        st.subheader("Optimization")
-        best=None
-        for d1 in range(5,30,5):
-            for d2 in range(10,40,5):
-                for d3 in range(10,50,5):
-                    SN_try=a1*(d1/2.54)+a2*m2*(d2/2.54)+a3*m3*(d3/2.54)
-                    if SN_try>=SN_req:
-                        tot=d1+d2+d3
-                        if best is None or tot<best[0]:
-                            best=(tot,d1,d2,d3)
-        if best:
-            st.info(f"Best: D1={best[1]}, D2={best[2]}, D3={best[3]} cm")
+        # Debug
+        with st.expander("🔍 Debug Panel"):
+            st.dataframe(pd.DataFrame(history))
 
         # Excel
-        pd.DataFrame([[SN_req,SN_ach,D1,D2,D3]],
-                     columns=["SN_req","SN_ach","D1","D2","D3"]
-        ).to_excel("design.xlsx",index=False)
+        df = pd.DataFrame([[SN_req,SN_ach,D1,D2,D3]],
+                          columns=["SN_req","SN_ach","D1","D2","D3"])
+        df.to_excel("design.xlsx", index=False)
 
         with open("design.xlsx","rb") as f:
-            st.download_button("Download Excel",f)
+            st.download_button("Download Excel", f)
+
+        # PDF
+        if st.button("Generate PDF Report"):
+            generate_pdf(SN_req, SN_ach, D1, D2, D3)
+            with open("report.pdf","rb") as f:
+                st.download_button("Download PDF", f)
 
 # ================= RIGID =================
 with tab2:
@@ -167,4 +179,4 @@ with tab2:
 
         st.success(f"Thickness = {D} cm")
 
-        st.bar_chart(pd.DataFrame({"Thickness":[D]},index=["Slab"]))
+        st.bar_chart(pd.DataFrame({"Thickness":[D]},index=["Concrete"]))
