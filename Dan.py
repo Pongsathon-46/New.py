@@ -1,197 +1,216 @@
 import streamlit as st
 import math
-import pandas as pd
-import random
+import numpy as np
+import matplotlib.pyplot as plt
 
-# -----------------------------
-# OPTIONAL PDF (ไม่พังถ้าไม่มี)
-# -----------------------------
-try:
-    from reportlab.platypus import SimpleDocTemplate, Paragraph
-    from reportlab.lib.styles import getSampleStyleSheet
-    REPORTLAB_AVAILABLE = True
-except:
-    REPORTLAB_AVAILABLE = False
+# =========================
+# 🔧 ENGINEERING FUNCTIONS
+# =========================
 
-st.set_page_config(page_title="AASHTO 1993 Pavement Design", layout="wide")
+def reliability_to_zr(R):
+    table = {
+        50: 0.0, 60: -0.253, 70: -0.524, 75: -0.674,
+        80: -0.841, 85: -1.036, 90: -1.282,
+        95: -1.645, 98: -2.054, 99: -2.327
+    }
+    return table.get(R, -1.645)
 
-# -----------------------------
-# SOLVER
-# -----------------------------
-def aashto_sn_eq(SN, ZR, So, delta_PSI, Mr):
-    SN = max(SN, 0.01)
-    return (
-        ZR * So
-        + 9.36 * math.log10(SN + 1)
-        - 0.20
-        + math.log10(delta_PSI / (4.2 - 1.5))
-        + (1094 / ((SN + 1) ** 5.19))
-        + 2.32 * math.log10(Mr)
-        - 8.07
+
+def cbr_to_mr(cbr):
+    # nonlinear (AASHTO recommended approximation)
+    return 2555 * (cbr ** 0.64)
+
+
+def drainage_coefficient(percent_time_saturated):
+    if percent_time_saturated < 1:
+        return 1.4
+    elif percent_time_saturated < 5:
+        return 1.2
+    elif percent_time_saturated < 25:
+        return 1.0
+    elif percent_time_saturated < 50:
+        return 0.8
+    else:
+        return 0.6
+
+
+def traffic_to_esal(adt, growth, years, lane_factor=0.8, truck_factor=1.5):
+    total = 0
+    for i in range(years):
+        adt_year = adt * ((1 + growth) ** i)
+        total += adt_year * 365
+    return total * lane_factor * truck_factor
+
+
+# =========================
+# 🛣️ FLEXIBLE DESIGN
+# =========================
+
+def solve_SN(W18, ZR, So, delta_PSI, MR):
+    def f(SN):
+        return (
+            ZR * So
+            + 9.36 * math.log10(SN + 1)
+            - 0.20
+            + (math.log10(delta_PSI / (4.2 - 1.5)))
+            / (0.40 + (1094 / (SN + 1) ** 5.19))
+            + 2.32 * math.log10(MR)
+            - 8.07
+            - math.log10(W18)
+        )
+
+    SN = 0.5
+    while SN < 10:
+        if abs(f(SN)) < 0.01:
+            return SN
+        SN += 0.01
+    return None
+
+
+# =========================
+# 💰 COST OPTIMIZATION (4 layers)
+# =========================
+
+def optimize_layers_cost(SN, a1, a2, a3, a4, m2, m3, m4, costs):
+    best = None
+
+    for D1 in np.arange(5, 30, 1):
+        for D2 in np.arange(5, 30, 1):
+            for D3 in np.arange(5, 30, 1):
+                for D4 in np.arange(5, 30, 1):
+
+                    SN_calc = (
+                        a1*D1 +
+                        a2*m2*D2 +
+                        a3*m3*D3 +
+                        a4*m4*D4
+                    )
+
+                    if SN_calc >= SN:
+                        cost = (
+                            D1*costs[0] +
+                            D2*costs[1] +
+                            D3*costs[2] +
+                            D4*costs[3]
+                        )
+
+                        if best is None or cost < best[0]:
+                            best = (cost, D1, D2, D3, D4)
+
+    return best
+
+
+# =========================
+# 🎨 DRAW LAYERS (เหมือนรูป)
+# =========================
+
+def draw_layers(D1, D2, D3, D4, MR):
+    fig, ax = plt.subplots()
+
+    layers = [D1, D2, D3, D4]
+    colors = ["black", "#6c9fb3", "#8b5a2b", "#d4a017"]
+
+    bottom = 0
+    for d, c in zip(layers, colors):
+        ax.bar(0, d, bottom=bottom)
+        ax.text(0, bottom + d/2, f"{d:.1f} cm",
+                ha='center', color='white', fontsize=12)
+        bottom += d
+
+    ax.text(0, -5, f"MR = {MR:.0f} psi", ha='center')
+    ax.set_xlim(-1, 1)
+    ax.axis('off')
+
+    return fig
+
+
+# =========================
+# 📊 SENSITIVITY GRAPH
+# =========================
+
+def sensitivity_plot(W18, ZR, So, delta_PSI):
+    CBRs = np.linspace(2, 15, 20)
+    SNs = []
+
+    for cbr in CBRs:
+        MR = cbr_to_mr(cbr)
+        SN = solve_SN(W18, ZR, So, delta_PSI, MR)
+        SNs.append(SN)
+
+    fig, ax = plt.subplots()
+    ax.plot(CBRs, SNs)
+    ax.set_xlabel("CBR (%)")
+    ax.set_ylabel("Required SN")
+
+    return fig
+
+
+# =========================
+# 🎯 UI
+# =========================
+
+st.title("🚧 AASHTO 1993 Pavement Design (Advanced)")
+
+# Sidebar
+st.sidebar.header("Traffic")
+
+adt = st.sidebar.number_input("ADT", value=5000)
+growth = st.sidebar.number_input("Growth rate", value=0.05)
+years = st.sidebar.number_input("Years", value=20)
+
+W18 = traffic_to_esal(adt, growth, years)
+st.sidebar.write(f"ESAL = {W18:,.0f}")
+
+R = st.sidebar.selectbox("Reliability (%)", [50,60,70,75,80,85,90,95,98,99])
+ZR = reliability_to_zr(R)
+
+So = st.sidebar.number_input("So", value=0.45)
+delta_PSI = st.sidebar.number_input("ΔPSI", value=1.7)
+
+CBR = st.sidebar.number_input("CBR (%)", value=5.0)
+MR = cbr_to_mr(CBR)
+
+# Drainage
+sat = st.sidebar.slider("Time Saturated (%)", 0, 100, 10)
+m2 = drainage_coefficient(sat)
+m3 = drainage_coefficient(sat)
+m4 = drainage_coefficient(sat)
+
+st.sidebar.write(f"m2 = {m2}, m3 = {m3}, m4 = {m4}")
+
+# Layer properties
+st.header("Layer Properties")
+
+a1 = st.number_input("a1 (AC)", value=0.44)
+a2 = st.number_input("a2 (Base)", value=0.14)
+a3 = st.number_input("a3 (Subbase)", value=0.11)
+a4 = st.number_input("a4 (Selected Subgrade)", value=0.08)
+
+st.subheader("Cost (per cm)")
+c1 = st.number_input("AC cost", value=10.0)
+c2 = st.number_input("Base cost", value=6.0)
+c3 = st.number_input("Subbase cost", value=4.0)
+c4 = st.number_input("Subgrade cost", value=2.0)
+
+if st.button("Calculate"):
+    SN = solve_SN(W18, ZR, So, delta_PSI, MR)
+
+    result = optimize_layers_cost(
+        SN, a1, a2, a3, a4,
+        m2, m3, m4,
+        [c1, c2, c3, c4]
     )
 
-def f_SN(SN, W18, ZR, So, delta_PSI, Mr):
-    return aashto_sn_eq(SN, ZR, So, delta_PSI, Mr) - math.log10(W18)
+    cost, D1, D2, D3, D4 = result
 
-def solve_sn_debug(W18, ZR, So, delta_PSI, Mr):
-    history = []
+    st.success(f"SN Required = {SN:.3f}")
+    st.write(f"Total Cost = {cost:.2f}")
 
-    # auto-fix
-    W18 = max(W18, 1e5)
-    Mr = max(Mr, 1000)
-    delta_PSI = max(delta_PSI, 1.5)
+    st.write("### Thickness (cm)")
+    st.write(f"D1 = {D1}")
+    st.write(f"D2 = {D2}")
+    st.write(f"D3 = {D3}")
+    st.write(f"D4 = {D4}")
 
-    low, high = 0.1, 10
-
-    for _ in range(20):
-        if f_SN(low, W18, ZR, So, delta_PSI, Mr) * f_SN(high, W18, ZR, So, delta_PSI, Mr) <= 0:
-            break
-        high *= 2
-
-    for i in range(50):
-        mid = (low + high) / 2
-        history.append({"iter": i, "SN": mid})
-        if f_SN(low, W18, ZR, So, delta_PSI, Mr) * f_SN(mid, W18, ZR, So, delta_PSI, Mr) < 0:
-            high = mid
-        else:
-            low = mid
-
-    SN = (low + high) / 2
-
-    for i in range(20):
-        f = f_SN(SN, W18, ZR, So, delta_PSI, Mr)
-        df = (f_SN(SN+0.001, W18, ZR, So, delta_PSI, Mr) - f)/0.001
-
-        history.append({"iter": i+50, "SN": SN})
-
-        if abs(df) < 1e-8:
-            break
-
-        SN_new = SN - f/df
-
-        if SN_new <= 0:
-            SN_new = SN/2
-
-        if abs(SN_new - SN) < 1e-6:
-            break
-
-        SN = SN_new
-
-    return SN, history
-
-def round_construct(x):
-    return math.ceil(x/5)*5
-
-# -----------------------------
-# PDF FUNCTION
-# -----------------------------
-def generate_pdf(SN_req, SN_ach, D1, D2, D3):
-    if not REPORTLAB_AVAILABLE:
-        return None
-
-    doc = SimpleDocTemplate("report.pdf")
-    styles = getSampleStyleSheet()
-
-    content = []
-    content.append(Paragraph("AASHTO 1993 Pavement Design Report", styles['Title']))
-    content.append(Paragraph(f"SN Required: {SN_req:.2f}", styles['Normal']))
-    content.append(Paragraph(f"SN Achieved: {SN_ach:.2f}", styles['Normal']))
-    content.append(Paragraph(f"Asphalt: {D1} cm", styles['Normal']))
-    content.append(Paragraph(f"Base: {D2} cm", styles['Normal']))
-    content.append(Paragraph(f"Subbase: {D3} cm", styles['Normal']))
-
-    doc.build(content)
-    return "report.pdf"
-
-# -----------------------------
-# UI
-# -----------------------------
-st.title("🚧 AASHTO 1993 Pavement Design")
-
-tab1, tab2 = st.tabs(["Flexible", "Rigid"])
-
-# ================= FLEXIBLE =================
-with tab1:
-    st.header("Flexible Pavement")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        AADT = st.number_input("AADT", value=10000)
-        growth = st.number_input("Growth (%)", value=3.0)/100
-        Mr = st.number_input("Mr", value=8000.0)
-        delta_PSI = st.number_input("ΔPSI", value=1.7)
-        So = st.number_input("So", value=0.45)
-
-    with col2:
-        a1 = st.number_input("a1", value=0.44)
-        a2 = st.number_input("a2", value=0.14)
-        a3 = st.number_input("a3", value=0.11)
-
-    # Traffic
-    W18 = sum([AADT*((1+growth)**y)*365*0.8*0.3 for y in range(20)])
-    st.info(f"W18 ≈ {round(W18,0):,}")
-
-    drainage = st.selectbox("Drainage", ["Poor","Fair","Good","Excellent"])
-    m_dict = {"Poor":0.6,"Fair":0.8,"Good":1.0,"Excellent":1.2}
-    m2 = m3 = m_dict[drainage]
-
-    if st.button("Run Design"):
-
-        ZR = -1.645
-        SN_req, history = solve_sn_debug(W18, ZR, So, delta_PSI, Mr)
-
-        if SN_req is None:
-            st.error("❌ Solver failed")
-            st.stop()
-
-        D1 = round_construct(max(SN_req/a1*2.54, 7.5))
-        D2 = round_construct(max(SN_req*0.6/(a2*m2)*2.54, 10))
-        D3 = round_construct(max(SN_req*0.4/(a3*m3)*2.54, 15))
-
-        SN_ach = a1*(D1/2.54)+a2*m2*(D2/2.54)+a3*m3*(D3/2.54)
-
-        st.success(f"SN Required = {SN_req:.2f} | SN Achieved = {SN_ach:.2f}")
-
-        st.bar_chart(pd.DataFrame({"Thickness":[D1,D2,D3]},
-                                 index=["Asphalt","Base","Subbase"]))
-
-        st.subheader("Convergence")
-        st.line_chart(pd.DataFrame([h["SN"] for h in history]))
-
-        with st.expander("Debug"):
-            st.dataframe(pd.DataFrame(history))
-
-        # Excel
-        df = pd.DataFrame([[SN_req,SN_ach,D1,D2,D3]],
-                          columns=["SN_req","SN_ach","D1","D2","D3"])
-        df.to_excel("design.xlsx", index=False)
-
-        with open("design.xlsx","rb") as f:
-            st.download_button("Download Excel", f)
-
-        # PDF (optional)
-        if REPORTLAB_AVAILABLE:
-            if st.button("Generate PDF"):
-                file = generate_pdf(SN_req, SN_ach, D1, D2, D3)
-                with open(file,"rb") as f:
-                    st.download_button("Download PDF", f)
-        else:
-            st.warning("⚠️ PDF ไม่พร้อมใช้งาน (ยังไม่ได้ติดตั้ง reportlab)")
-
-# ================= RIGID =================
-with tab2:
-    st.header("Rigid Pavement")
-
-    W18 = st.number_input("ESAL", value=1e6, key="r1")
-    ZR = st.number_input("Zr", value=-1.645)
-    So = st.number_input("So", value=0.35)
-    Sc = st.number_input("Sc", value=650.0)
-
-    if st.button("Design Rigid"):
-        D = (math.log10(W18)+ZR*So)/(1+(1e7/(Sc**2)))
-        D = round_construct(D*2.54)
-
-        st.success(f"Thickness = {D} cm")
-
-        st.bar_chart(pd.DataFrame({"Thickness":[D]},index=["Concrete"]))
+    st.pyplot(draw_layers(D1, D2, D3, D4, MR))
+    st.pyplot(sensitivity_plot(W18, ZR, So, delta_PSI))
