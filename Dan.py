@@ -2,13 +2,21 @@ import streamlit as st
 import math
 import pandas as pd
 import random
-from reportlab.platypus import SimpleDocTemplate, Paragraph
-from reportlab.lib.styles import getSampleStyleSheet
+
+# -----------------------------
+# OPTIONAL PDF (ไม่พังถ้าไม่มี)
+# -----------------------------
+try:
+    from reportlab.platypus import SimpleDocTemplate, Paragraph
+    from reportlab.lib.styles import getSampleStyleSheet
+    REPORTLAB_AVAILABLE = True
+except:
+    REPORTLAB_AVAILABLE = False
 
 st.set_page_config(page_title="AASHTO 1993 Pavement Design", layout="wide")
 
 # -----------------------------
-# AASHTO Solver (Stable + Debug)
+# SOLVER
 # -----------------------------
 def aashto_sn_eq(SN, ZR, So, delta_PSI, Mr):
     SN = max(SN, 0.01)
@@ -28,7 +36,7 @@ def f_SN(SN, W18, ZR, So, delta_PSI, Mr):
 def solve_sn_debug(W18, ZR, So, delta_PSI, Mr):
     history = []
 
-    # Auto-fix
+    # auto-fix
     W18 = max(W18, 1e5)
     Mr = max(Mr, 1000)
     delta_PSI = max(delta_PSI, 1.5)
@@ -42,9 +50,8 @@ def solve_sn_debug(W18, ZR, So, delta_PSI, Mr):
 
     for i in range(50):
         mid = (low + high) / 2
-        f_mid = f_SN(mid, W18, ZR, So, delta_PSI, Mr)
         history.append({"iter": i, "SN": mid})
-        if f_SN(low, W18, ZR, So, delta_PSI, Mr) * f_mid < 0:
+        if f_SN(low, W18, ZR, So, delta_PSI, Mr) * f_SN(mid, W18, ZR, So, delta_PSI, Mr) < 0:
             high = mid
         else:
             low = mid
@@ -61,6 +68,7 @@ def solve_sn_debug(W18, ZR, So, delta_PSI, Mr):
             break
 
         SN_new = SN - f/df
+
         if SN_new <= 0:
             SN_new = SN/2
 
@@ -75,9 +83,12 @@ def round_construct(x):
     return math.ceil(x/5)*5
 
 # -----------------------------
-# PDF Report
+# PDF FUNCTION
 # -----------------------------
 def generate_pdf(SN_req, SN_ach, D1, D2, D3):
+    if not REPORTLAB_AVAILABLE:
+        return None
+
     doc = SimpleDocTemplate("report.pdf")
     styles = getSampleStyleSheet()
 
@@ -85,22 +96,23 @@ def generate_pdf(SN_req, SN_ach, D1, D2, D3):
     content.append(Paragraph("AASHTO 1993 Pavement Design Report", styles['Title']))
     content.append(Paragraph(f"SN Required: {SN_req:.2f}", styles['Normal']))
     content.append(Paragraph(f"SN Achieved: {SN_ach:.2f}", styles['Normal']))
-    content.append(Paragraph(f"Asphalt (D1): {D1} cm", styles['Normal']))
-    content.append(Paragraph(f"Base (D2): {D2} cm", styles['Normal']))
-    content.append(Paragraph(f"Subbase (D3): {D3} cm", styles['Normal']))
+    content.append(Paragraph(f"Asphalt: {D1} cm", styles['Normal']))
+    content.append(Paragraph(f"Base: {D2} cm", styles['Normal']))
+    content.append(Paragraph(f"Subbase: {D3} cm", styles['Normal']))
 
     doc.build(content)
+    return "report.pdf"
 
 # -----------------------------
 # UI
 # -----------------------------
-st.title("🚧 AASHTO 1993 Pavement Design (Student Version)")
+st.title("🚧 AASHTO 1993 Pavement Design")
 
-tab1, tab2 = st.tabs(["Flexible Pavement", "Rigid Pavement"])
+tab1, tab2 = st.tabs(["Flexible", "Rigid"])
 
 # ================= FLEXIBLE =================
 with tab1:
-    st.header("Flexible Pavement Design")
+    st.header("Flexible Pavement")
 
     col1, col2 = st.columns(2)
 
@@ -116,11 +128,10 @@ with tab1:
         a2 = st.number_input("a2", value=0.14)
         a3 = st.number_input("a3", value=0.11)
 
-    # Traffic Growth
+    # Traffic
     W18 = sum([AADT*((1+growth)**y)*365*0.8*0.3 for y in range(20)])
-    st.info(f"Total ESAL (W18) ≈ {round(W18,0):,}")
+    st.info(f"W18 ≈ {round(W18,0):,}")
 
-    # Drainage
     drainage = st.selectbox("Drainage", ["Poor","Fair","Good","Excellent"])
     m_dict = {"Poor":0.6,"Fair":0.8,"Good":1.0,"Excellent":1.2}
     m2 = m3 = m_dict[drainage]
@@ -130,6 +141,10 @@ with tab1:
         ZR = -1.645
         SN_req, history = solve_sn_debug(W18, ZR, So, delta_PSI, Mr)
 
+        if SN_req is None:
+            st.error("❌ Solver failed")
+            st.stop()
+
         D1 = round_construct(max(SN_req/a1*2.54, 7.5))
         D2 = round_construct(max(SN_req*0.6/(a2*m2)*2.54, 10))
         D3 = round_construct(max(SN_req*0.4/(a3*m3)*2.54, 15))
@@ -138,16 +153,13 @@ with tab1:
 
         st.success(f"SN Required = {SN_req:.2f} | SN Achieved = {SN_ach:.2f}")
 
-        # Chart
         st.bar_chart(pd.DataFrame({"Thickness":[D1,D2,D3]},
                                  index=["Asphalt","Base","Subbase"]))
 
-        # Convergence
-        st.subheader("Convergence Graph")
+        st.subheader("Convergence")
         st.line_chart(pd.DataFrame([h["SN"] for h in history]))
 
-        # Debug
-        with st.expander("🔍 Debug Panel"):
+        with st.expander("Debug"):
             st.dataframe(pd.DataFrame(history))
 
         # Excel
@@ -158,11 +170,14 @@ with tab1:
         with open("design.xlsx","rb") as f:
             st.download_button("Download Excel", f)
 
-        # PDF
-        if st.button("Generate PDF Report"):
-            generate_pdf(SN_req, SN_ach, D1, D2, D3)
-            with open("report.pdf","rb") as f:
-                st.download_button("Download PDF", f)
+        # PDF (optional)
+        if REPORTLAB_AVAILABLE:
+            if st.button("Generate PDF"):
+                file = generate_pdf(SN_req, SN_ach, D1, D2, D3)
+                with open(file,"rb") as f:
+                    st.download_button("Download PDF", f)
+        else:
+            st.warning("⚠️ PDF ไม่พร้อมใช้งาน (ยังไม่ได้ติดตั้ง reportlab)")
 
 # ================= RIGID =================
 with tab2:
