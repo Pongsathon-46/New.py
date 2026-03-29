@@ -1,7 +1,15 @@
 import streamlit as st
 import math
 import pandas as pd
-import plotly.graph_objects as go
+
+# =========================
+# SAFE IMPORT
+# =========================
+try:
+    import plotly.graph_objects as go
+    PLOTLY_OK = True
+except:
+    PLOTLY_OK = False
 
 # =========================
 # CONFIG
@@ -75,14 +83,10 @@ cum_SN = []
 total = 0
 
 for _, r in edited.iterrows():
-    if r["Use"]:
-        sn = r["a"] * r["m"] * r["D(cm)"]
-    else:
-        sn = 0
-
+    sn = r["a"] * r["m"] * r["D(cm)"] if r["Use"] else 0
     total += sn
-    SN_list.append(sn)
-    cum_SN.append(total)
+    SN_list.append(round(sn,3))
+    cum_SN.append(round(total,3))
 
 SN_prov = round(total,3)
 
@@ -100,9 +104,9 @@ else:
     c3.error("FAIL")
 
 # =========================
-# SN TABLE (SHOW CONTRIBUTION)
+# TABLE
 # =========================
-st.subheader("SN Contribution Table")
+st.subheader("SN Contribution")
 
 result_df = edited.copy()
 result_df["SN Layer"] = SN_list
@@ -111,80 +115,43 @@ result_df["SN Cumulative"] = cum_SN
 st.dataframe(result_df)
 
 # =========================
-# INTERACTIVE LAYER GRAPH
+# GRAPH (SAFE)
 # =========================
-st.subheader("Layer Section (Interactive)")
+st.subheader("SN Stack Graph")
 
-colors = ["#000000", "#3498DB", "#8E5A2B", "#F4D03F"]
-text_colors = ["white", "black", "white", "black"]
+if PLOTLY_OK:
+    fig = go.Figure()
 
-fig = go.Figure()
-y_base = 0
+    for i, r in edited.iterrows():
+        fig.add_trace(go.Bar(
+            name=r["Layer"],
+            x=["SN"],
+            y=[SN_list[i]],
+            text=SN_list[i],
+            textposition="inside"
+        ))
 
-for i, r in edited.iterrows():
+    fig.update_layout(barmode='stack')
+    st.plotly_chart(fig, use_container_width=True)
 
-    fig.add_trace(go.Bar(
-        x=[1],
-        y=[r["D(cm)"]],
-        base=y_base,
-        marker_color=colors[i],
-        text=f"D{i+1}<br>{r['Layer']}<br>{r['D(cm)']} cm",
-        textposition="inside",
-        textfont=dict(color=text_colors[i], size=14),
-        hovertemplate=(
-            f"<b>{r['Layer']}</b><br>"
-            f"Thickness: {r['D(cm)']} cm<br>"
-            f"SN: {round(SN_list[i],3)}<br>"
-            f"Cumulative SN: {round(cum_SN[i],3)}"
-            "<extra></extra>"
-        ),
-        width=0.5
-    ))
-
-    y_base += r["D(cm)"]
-
-fig.update_layout(
-    height=500,
-    showlegend=False,
-    yaxis=dict(title="Depth (cm)", autorange="reversed"),
-    xaxis=dict(visible=False)
-)
-
-st.plotly_chart(fig, use_container_width=True)
-
-# =========================
-# SN STACK GRAPH
-# =========================
-st.subheader("SN Stack Contribution")
-
-fig2 = go.Figure()
-
-for i, r in edited.iterrows():
-    fig2.add_trace(go.Bar(
-        name=r["Layer"],
-        x=["SN"],
-        y=[SN_list[i]],
-        marker_color=colors[i],
-        text=round(SN_list[i],3),
-        textposition="inside"
-    ))
-
-fig2.update_layout(
-    barmode='stack',
-    height=400
-)
-
-st.plotly_chart(fig2, use_container_width=True)
+else:
+    st.warning("No plotly → fallback chart")
+    st.bar_chart(pd.DataFrame({
+        "Layer": edited["Layer"],
+        "SN": SN_list
+    }).set_index("Layer"))
 
 # =========================
 # SENSITIVITY
 # =========================
-st.subheader("Sensitivity (W18 vs SN)")
+st.subheader("Sensitivity")
 
 W_range = range(1000000,10000000,1000000)
 SN_curve = [calc_SN_required(w, ZR, So, dPSI, MR) for w in W_range]
 
-fig3 = go.Figure()
-fig3.add_trace(go.Scatter(x=list(W_range), y=SN_curve, mode='lines+markers'))
-
-st.plotly_chart(fig3, use_container_width=True)
+if PLOTLY_OK:
+    fig2 = go.Figure()
+    fig2.add_scatter(x=list(W_range), y=SN_curve, mode='lines+markers')
+    st.plotly_chart(fig2, use_container_width=True)
+else:
+    st.line_chart(SN_curve)
