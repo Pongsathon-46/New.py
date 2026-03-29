@@ -21,17 +21,15 @@ st.set_page_config(page_title="AASHTO 1993 PRO", layout="wide")
 # FUNCTIONS
 # =========================
 def reliability_to_zr(R):
-    table = {
+    return {
         50:0.0,60:-0.253,70:-0.524,
         75:-0.674,80:-0.841,85:-1.036,
         90:-1.282,95:-1.645,99:-2.327
-    }
-    return table[R]
+    }[R]
 
 def MR_from_CBR(CBR):
     return 2555*(CBR**0.64)
 
-# Flexible SN
 def calc_SN_required(W18, ZR, So, dPSI, MR):
     SN = 3
     for _ in range(100):
@@ -41,15 +39,13 @@ def calc_SN_required(W18, ZR, So, dPSI, MR):
         SN += (math.log10(W18)-logW)
     return round(SN,3)
 
-# Rigid Iterative
 def calc_rigid(W18, ZR, So, Sc, Cd, J, k):
-    D = 8  # initial guess (inch)
+    D = 8
     for _ in range(100):
-        term1 = ZR*So
-        term2 = 7.35*math.log10(D+1) - 0.06
-        term3 = math.log10((Sc*Cd)/(215.63*J*(D**0.75)))
-        term4 = 1.624*math.log10(D)
-        logW = term1 + term2 + term3 + term4
+        logW = ZR*So
+        logW += 7.35*math.log10(D+1) - 0.06
+        logW += math.log10((Sc*Cd)/(215.63*J*(D**0.75)))
+        logW += 1.624*math.log10(D)
         D += (math.log10(W18) - logW)
     return round(D,2)
 
@@ -61,13 +57,13 @@ st.sidebar.title("AASHTO 1993")
 mode = st.sidebar.radio("Mode", ["Flexible","Rigid"])
 
 W18 = st.sidebar.number_input("W18", value=5000000.0)
-R = st.sidebar.selectbox("Reliability", [50,60,70,75,80,85,90,95,99], index=8)
+R = st.sidebar.selectbox("Reliability",[50,60,70,75,80,85,90,95,99], index=8)
 So = st.sidebar.number_input("So", value=0.45)
 
 ZR = reliability_to_zr(R)
 
 # =========================
-# FLEXIBLE MODE
+# FLEXIBLE
 # =========================
 if mode == "Flexible":
 
@@ -93,7 +89,7 @@ if mode == "Flexible":
     df = pd.DataFrame(data, columns=["Layer","a","m","D(cm)","Use"])
     edited = st.data_editor(df, use_container_width=True)
 
-    # SN calc
+    # SN CALC
     SN_list = []
     cum_SN = []
     total = 0
@@ -106,54 +102,46 @@ if mode == "Flexible":
 
     SN_prov = round(total,3)
 
+    # METRICS
     c1,c2,c3 = st.columns(3)
     c1.metric("SN Required", SN_req)
     c2.metric("SN Provided", SN_prov)
     c3.metric("Status", "PASS" if SN_prov>=SN_req else "FAIL")
 
     # =========================
-    # ANIMATION SN BUILD-UP
+    # ANIMATION
     # =========================
     st.subheader("🎬 SN Build-up Animation")
 
     if st.button("▶ Start Animation"):
 
         placeholder = st.empty()
-
         total_anim = 0
 
         for i, r in edited.iterrows():
 
-            sn = SN_list[i]
-            total_anim += sn
+            total_anim += SN_list[i]
 
             if PLOTLY_OK:
                 fig = go.Figure()
-
                 fig.add_trace(go.Bar(
-                    name=r["Layer"],
                     x=["SN"],
                     y=[total_anim],
                     text=f"{round(total_anim,3)}",
                     textposition="inside"
                 ))
-
                 fig.update_layout(
                     title=f"Layer {i+1}: {r['Layer']}",
-                    yaxis_title="SN",
                     height=400
                 )
-
                 placeholder.plotly_chart(fig, use_container_width=True)
-
             else:
-                placeholder.write(f"Layer {i+1}: {r['Layer']}")
-                placeholder.progress(min(int(total_anim*10),100))
+                placeholder.write(f"{r['Layer']} → SN = {total_anim}")
 
             time.sleep(0.8)
 
     # =========================
-    # FINAL STACK GRAPH
+    # STACK GRAPH
     # =========================
     st.subheader("SN Stack")
 
@@ -167,12 +155,63 @@ if mode == "Flexible":
             ))
         fig2.update_layout(barmode='stack')
         st.plotly_chart(fig2, use_container_width=True)
-
     else:
         st.bar_chart(pd.DataFrame({"SN":SN_list}))
 
+    # =========================
+    # SECTION VIEW (🔥 เพิ่มล่าสุด)
+    # =========================
+    st.subheader("🧱 Pavement Section (Top → Bottom)")
+
+    colors = ["#000000", "#3498DB", "#8E5A2B", "#F4D03F"]
+    text_colors = ["white", "black", "white", "black"]
+
+    if PLOTLY_OK:
+        fig3 = go.Figure()
+        y_base = 0
+
+        for i, r in edited.iterrows():
+            t = r["D(cm)"]
+
+            fig3.add_trace(go.Bar(
+                x=[0],
+                y=[t],
+                base=y_base,
+                marker_color=colors[i],
+                width=0.6,
+                text=f"D{i+1}<br>{r['Layer']}<br>{t} cm",
+                textposition="inside",
+                textfont=dict(color=text_colors[i]),
+                hovertemplate=(
+                    f"<b>{r['Layer']}</b><br>"
+                    f"Thickness: {t} cm<br>"
+                    f"SN: {SN_list[i]}<br>"
+                    f"Cumulative SN: {cum_SN[i]}"
+                    "<extra></extra>"
+                )
+            ))
+
+            y_base += t
+
+        fig3.update_layout(
+            height=600,
+            showlegend=False,
+            xaxis=dict(visible=False),
+            yaxis=dict(title="Depth (cm)", autorange="reversed"),
+            plot_bgcolor="#111111"
+        )
+
+        st.plotly_chart(fig3, use_container_width=True)
+
+    else:
+        for i, r in edited.iterrows():
+            st.markdown(
+                f"<div style='background:{colors[i]};color:{text_colors[i]};padding:15px;margin:5px'>{r['Layer']} {r['D(cm)']} cm</div>",
+                unsafe_allow_html=True
+            )
+
 # =========================
-# RIGID MODE
+# RIGID
 # =========================
 else:
 
@@ -181,13 +220,10 @@ else:
     Sc = st.sidebar.number_input("Sc (psi)", value=650.0)
     Cd = st.sidebar.number_input("Cd", value=1.0)
     J = st.sidebar.number_input("J", value=3.2)
-    k = st.sidebar.number_input("k (pci)", value=100.0)
+    k = st.sidebar.number_input("k", value=100.0)
 
     D = calc_rigid(W18, ZR, So, Sc, Cd, J, k)
 
-    c1,c2,c3 = st.columns(3)
+    c1,c2 = st.columns(2)
     c1.metric("Thickness (inch)", D)
     c2.metric("Thickness (cm)", round(D*2.54,2))
-    c3.metric("k-value", k)
-
-    st.info("Rigid design uses AASHTO 1993 iterative equation")
