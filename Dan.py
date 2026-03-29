@@ -1,31 +1,12 @@
 import streamlit as st
 import math
 import pandas as pd
+import plotly.graph_objects as go
 
 # =========================
 # CONFIG
 # =========================
 st.set_page_config(page_title="AASHTO 1993", layout="wide")
-
-# =========================
-# STYLE (UI เหมือนเว็บ)
-# =========================
-st.markdown("""
-<style>
-.metric-box {
-    background-color: #161A23;
-    padding: 15px;
-    border-radius: 12px;
-    text-align: center;
-}
-.layer-box {
-    padding: 8px;
-    border-radius: 6px;
-    margin-bottom: 5px;
-    color: white;
-}
-</style>
-""", unsafe_allow_html=True)
 
 # =========================
 # FUNCTIONS
@@ -41,8 +22,7 @@ def reliability_to_zr(R):
 def MR_from_CBR(CBR):
     return 2555*(CBR**0.64)
 
-# Flexible
-def calc_SN(W18, ZR, So, dPSI, MR):
+def calc_SN_required(W18, ZR, So, dPSI, MR):
     SN = 3
     for _ in range(100):
         logW = ZR*So + 9.36*math.log10(SN+1)-0.20
@@ -51,106 +31,160 @@ def calc_SN(W18, ZR, So, dPSI, MR):
         SN += (math.log10(W18)-logW)
     return round(SN,3)
 
-# Rigid (AASHTO Iteration)
-def calc_rigid(W18, ZR, So, Sc, Cd, J, k):
-    D = 8  # initial guess (inch)
-    for _ in range(100):
-        term1 = ZR*So
-        term2 = 7.35*math.log10(D+1) - 0.06
-        term3 = math.log10((Sc*Cd)/(215.63*J*(D**0.75)))
-        term4 = 1.624*math.log10(D)
-        logW = term1 + term2 + term3 + term4
-
-        D = D + (math.log10(W18) - logW)
-
-    return round(D,2)
-
 # =========================
 # SIDEBAR
 # =========================
 st.sidebar.title("AASHTO 1993")
 
-mode = st.sidebar.radio("Mode", ["Flexible","Rigid"])
-
 W18 = st.sidebar.number_input("W18", value=5000000.0)
 R = st.sidebar.selectbox("Reliability", [50,60,70,75,80,85,90,95,99], index=8)
 So = st.sidebar.number_input("So", value=0.45)
+Pi = st.sidebar.number_input("Pi", value=4.2)
+Pt = st.sidebar.number_input("Pt", value=2.5)
+CBR = st.sidebar.number_input("CBR", value=5.0)
 
 ZR = reliability_to_zr(R)
+dPSI = Pi - Pt
+MR = MR_from_CBR(CBR)
 
 # =========================
-# FLEXIBLE
+# CALC
 # =========================
-if mode == "Flexible":
+SN_req = calc_SN_required(W18, ZR, So, dPSI, MR)
 
-    Pi = st.sidebar.number_input("Pi", value=4.2)
-    Pt = st.sidebar.number_input("Pt", value=2.5)
-    CBR = st.sidebar.number_input("CBR", value=5.0)
-
-    dPSI = Pi - Pt
-    MR = MR_from_CBR(CBR)
-
-    SN_req = calc_SN(W18, ZR, So, dPSI, MR)
-
-    st.title("Flexible Pavement")
-
-    # TABLE
-    data = [
-        ["AC",0.44,1.0,20.0,True],
-        ["Base",0.14,1.1,20.0,True],
-        ["Subbase",0.11,1.1,10.0,True],
-    ]
-
-    df = pd.DataFrame(data, columns=["Layer","a","m","D(cm)","Use"])
-    edited = st.data_editor(df, use_container_width=True)
-
-    SN_prov = sum([
-        r["a"]*r["m"]*r["D(cm)"]
-        for _,r in edited.iterrows() if r["Use"]
-    ])
-
-    total = edited["D(cm)"].sum()
-
-    # METRICS
-    c1,c2,c3,c4 = st.columns(4)
-
-    c1.markdown(f"<div class='metric-box'>SN Req<br><b>{SN_req}</b></div>", unsafe_allow_html=True)
-    c2.markdown(f"<div class='metric-box'>SN Prov<br><b>{round(SN_prov,3)}</b></div>", unsafe_allow_html=True)
-    c3.markdown(f"<div class='metric-box'>Thickness<br><b>{round(total,1)} cm</b></div>", unsafe_allow_html=True)
-    c4.markdown(f"<div class='metric-box'>W18<br><b>{W18:,.0f}</b></div>", unsafe_allow_html=True)
-
-    # LAYER DIAGRAM (UI สวย)
-    st.subheader("Layer Section")
-
-    colors = ["black","#3498DB","#8E5A2B"]
-
-    y = 0
-    for i,r in edited.iterrows():
-        color = colors[i]
-        st.markdown(
-            f"<div class='layer-box' style='background:{color}'>"
-            f"D{i+1} : {r['Layer']} = {r['D(cm)']} cm</div>",
-            unsafe_allow_html=True
-        )
+st.title("Flexible Pavement Design")
 
 # =========================
-# RIGID
+# TABLE INPUT
 # =========================
+data = [
+    ["AC",0.44,1.0,20.0,True],
+    ["Base",0.14,1.1,20.0,True],
+    ["Subbase",0.11,1.1,10.0,True],
+    ["Subgrade",0.10,1.0,10.0,True],
+]
+
+df = pd.DataFrame(data, columns=["Layer","a","m","D(cm)","Use"])
+edited = st.data_editor(df, use_container_width=True)
+
+# =========================
+# SN CALCULATION
+# =========================
+SN_list = []
+cum_SN = []
+total = 0
+
+for _, r in edited.iterrows():
+    if r["Use"]:
+        sn = r["a"] * r["m"] * r["D(cm)"]
+    else:
+        sn = 0
+
+    total += sn
+    SN_list.append(sn)
+    cum_SN.append(total)
+
+SN_prov = round(total,3)
+
+# =========================
+# METRICS
+# =========================
+c1,c2,c3 = st.columns(3)
+
+c1.metric("SN Required", SN_req)
+c2.metric("SN Provided", SN_prov)
+
+if SN_prov >= SN_req:
+    c3.success("PASS")
 else:
+    c3.error("FAIL")
 
-    st.title("Rigid Pavement")
+# =========================
+# SN TABLE (SHOW CONTRIBUTION)
+# =========================
+st.subheader("SN Contribution Table")
 
-    Sc = st.sidebar.number_input("Sc (psi)", value=650.0)
-    Cd = st.sidebar.number_input("Cd", value=1.0)
-    J = st.sidebar.number_input("J", value=3.2)
-    k = st.sidebar.number_input("k (pci)", value=100.0)
+result_df = edited.copy()
+result_df["SN Layer"] = SN_list
+result_df["SN Cumulative"] = cum_SN
 
-    D = calc_rigid(W18, ZR, So, Sc, Cd, J, k)
+st.dataframe(result_df)
 
-    c1,c2,c3 = st.columns(3)
+# =========================
+# INTERACTIVE LAYER GRAPH
+# =========================
+st.subheader("Layer Section (Interactive)")
 
-    c1.markdown(f"<div class='metric-box'>Thickness<br><b>{D} inch</b></div>", unsafe_allow_html=True)
-    c2.markdown(f"<div class='metric-box'>Thickness<br><b>{round(D*2.54,2)} cm</b></div>", unsafe_allow_html=True)
-    c3.markdown(f"<div class='metric-box'>k-value<br><b>{k}</b></div>", unsafe_allow_html=True)
+colors = ["#000000", "#3498DB", "#8E5A2B", "#F4D03F"]
+text_colors = ["white", "black", "white", "black"]
 
-    st.info("Rigid design uses iterative AASHTO equation")
+fig = go.Figure()
+y_base = 0
+
+for i, r in edited.iterrows():
+
+    fig.add_trace(go.Bar(
+        x=[1],
+        y=[r["D(cm)"]],
+        base=y_base,
+        marker_color=colors[i],
+        text=f"D{i+1}<br>{r['Layer']}<br>{r['D(cm)']} cm",
+        textposition="inside",
+        textfont=dict(color=text_colors[i], size=14),
+        hovertemplate=(
+            f"<b>{r['Layer']}</b><br>"
+            f"Thickness: {r['D(cm)']} cm<br>"
+            f"SN: {round(SN_list[i],3)}<br>"
+            f"Cumulative SN: {round(cum_SN[i],3)}"
+            "<extra></extra>"
+        ),
+        width=0.5
+    ))
+
+    y_base += r["D(cm)"]
+
+fig.update_layout(
+    height=500,
+    showlegend=False,
+    yaxis=dict(title="Depth (cm)", autorange="reversed"),
+    xaxis=dict(visible=False)
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# =========================
+# SN STACK GRAPH
+# =========================
+st.subheader("SN Stack Contribution")
+
+fig2 = go.Figure()
+
+for i, r in edited.iterrows():
+    fig2.add_trace(go.Bar(
+        name=r["Layer"],
+        x=["SN"],
+        y=[SN_list[i]],
+        marker_color=colors[i],
+        text=round(SN_list[i],3),
+        textposition="inside"
+    ))
+
+fig2.update_layout(
+    barmode='stack',
+    height=400
+)
+
+st.plotly_chart(fig2, use_container_width=True)
+
+# =========================
+# SENSITIVITY
+# =========================
+st.subheader("Sensitivity (W18 vs SN)")
+
+W_range = range(1000000,10000000,1000000)
+SN_curve = [calc_SN_required(w, ZR, So, dPSI, MR) for w in W_range]
+
+fig3 = go.Figure()
+fig3.add_trace(go.Scatter(x=list(W_range), y=SN_curve, mode='lines+markers'))
+
+st.plotly_chart(fig3, use_container_width=True)
