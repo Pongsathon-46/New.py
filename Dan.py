@@ -44,11 +44,9 @@ def calc_SN(W18, ZR, So, dPSI, MR):
         SN += (math.log10(W18)-logW)
     return round(SN,3)
 
-# 🔥 RIGID ITERATIVE (เต็มสูตร)
 def calc_rigid_full(W18, ZR, So, Sc, Cd, J, k):
     D = 8
     steps = []
-
     for i in range(20):
         term1 = ZR*So
         term2 = 7.35*math.log10(D+1) - 0.06
@@ -59,8 +57,7 @@ def calc_rigid_full(W18, ZR, So, Sc, Cd, J, k):
         error = math.log10(W18) - logW
 
         steps.append([i+1, round(D,3), round(logW,3), round(error,4)])
-
-        D = D + error
+        D += error
 
     return round(D,2), steps
 
@@ -115,14 +112,11 @@ if mode == "Flexible":
     st.metric("SN Provided", round(total,3))
     st.metric("Total Depth", depth)
 
-    # =========================
-    # SECTION (แสดงแน่นอน)
-    # =========================
     st.subheader("🧱 Section View")
 
     colors = ["#000000","#3498DB","#8E5A2B","#F4D03F"]
 
-    # ✅ Plotly
+    # ---------- Plotly ----------
     if PLOTLY_OK:
         fig = go.Figure()
         y=0
@@ -143,7 +137,7 @@ if mode == "Flexible":
 
         st.plotly_chart(fig, use_container_width=True)
 
-    # ✅ Matplotlib
+    # ---------- Matplotlib ----------
     elif MPL_OK:
         fig, ax = plt.subplots()
         y=0
@@ -158,28 +152,27 @@ if mode == "Flexible":
         ax.invert_yaxis()
         st.pyplot(fig)
 
-    # ✅ HTML (สุดท้าย)
-   else:
+    # ---------- HTML (FIXED) ----------
+    else:
+        html = ""
 
-    html = ""
+        for i, r in edited.iterrows():  # ✅ FIX
+            html += f"<div style='background:{colors[i]}; height:{r['D(cm)']*3}px; color:white; display:flex; align-items:center; justify-content:center;'>"
+            html += f"{r['Layer']}<br>{r['D(cm)']} cm"
+            html += "</div>"
 
-    for i, r in df_layer.iterrows():
-        html += f"<div style='background:{colors[i]}; height:{r['D(cm)']*3}px; color:black; display:flex; align-items:center; justify-content:center; border-bottom:1px solid white;'>"
-        html += f"{r['Layer']}<br>{r['D(cm)']} cm"
-        html += "</div>"
+        html = f"""
+<div style='width:200px;margin:auto;border:2px solid black;'>
+{html}
+</div>
+<div style='text-align:center;margin-top:10px;'>
+Total = {round(depth,1)} cm
+</div>
+"""
+        st.markdown(html, unsafe_allow_html=True)
 
-    html = f"""
-    <div style='width:200px;margin:auto;border:2px solid black;'>
-    {html}
-    </div>
-    <div style='text-align:center;margin-top:10px;'>
-    Total = {round(total_depth,1)} cm
-    </div>
-    """
-
-    st.markdown(html, unsafe_allow_html=True)
 # =========================
-# RIGID (เพิ่ม Section View)
+# RIGID
 # =========================
 else:
 
@@ -195,157 +188,70 @@ else:
     st.metric("Thickness (inch)", D)
     st.metric("Thickness (cm)", round(D*2.54,2))
 
-    # =========================
-    # SECTION VIEW (🔥 เพิ่ม)
-    # =========================
     st.subheader("🧱 Rigid Pavement Section")
 
-    # layer data (สามารถแก้ได้)
     layers = [
-        ["PCC Slab", round(D*2.54,2)],   # แปลงเป็น cm
+        ["PCC Slab", round(D*2.54,2)],
         ["Subbase", 15],
         ["Subgrade", 20],
     ]
 
     df_layer = pd.DataFrame(layers, columns=["Layer","D(cm)"])
-
     colors = ["#BDC3C7", "#8E5A2B", "#F4D03F"]
 
     total_depth = df_layer["D(cm)"].sum()
-    # ---------- Plotly (IMPROVED SECTION VIEW) ----------
-    if PLOTLY_OK:
 
+    if PLOTLY_OK:
         fig = go.Figure()
         y = 0
 
         for i, r in df_layer.iterrows():
+            y0, y1 = y, y + r["D(cm)"]
 
-            y0 = y
-            y1 = y + r["D(cm)"]
+            fig.add_shape(type="rect", x0=0, x1=1, y0=y0, y1=y1,
+                          fillcolor=colors[i], line=dict(color="black"))
 
-            # 🔹 วาด layer เป็น block จริง
-            fig.add_shape(
-                type="rect",
-                x0=0, x1=1,
-                y0=y0, y1=y1,
-                fillcolor=colors[i],
-                line=dict(color="black")
-            )
-
-            # 🔹 ข้อความกลาง layer
-            fig.add_annotation(
-                x=0.5,
-                y=(y0 + y1)/2,
-                text=f"{r['Layer']}<br>{r['D(cm)']} cm",
-                showarrow=False,
-                font=dict(color="black", size=14)
-            )
-
-            # 🔹 เส้น dimension บน
-            fig.add_shape(
-                type="line",
-                x0=1.1, x1=1.2,
-                y0=y0, y1=y0,
-                line=dict(color="black")
-            )
-
-            # 🔹 เส้น dimension ล่าง
-            fig.add_shape(
-                type="line",
-                x0=1.1, x1=1.2,
-                y0=y1, y1=y1,
-                line=dict(color="black")
-            )
-
-            # 🔹 เส้นแนวตั้ง (บอกความหนา)
-            fig.add_shape(
-                type="line",
-                x0=1.15, x1=1.15,
-                y0=y0, y1=y1,
-                line=dict(color="black", dash="dot")
-            )
-
-            # 🔹 label ความหนา
-            fig.add_annotation(
-                x=1.3,
-                y=(y0 + y1)/2,
-                text=f"{r['D(cm)']} cm",
-                showarrow=False
-            )
+            fig.add_annotation(x=0.5, y=(y0+y1)/2,
+                               text=f"{r['Layer']}<br>{r['D(cm)']} cm",
+                               showarrow=False)
 
             y = y1
 
-        # 🔹 total depth
-        fig.add_annotation(
-            x=0.5,
-            y=total_depth + 5,
-            text=f"Total Depth = {round(total_depth,1)} cm",
-            showarrow=False,
-            font=dict(size=16)
-        )
-
-        fig.update_layout(
-            height=650,
-            yaxis=dict(autorange="reversed", title="Depth (cm)"),
-            xaxis=dict(visible=False),
-            showlegend=False
-        )
+        fig.update_layout(height=650,
+                          yaxis=dict(autorange="reversed"),
+                          xaxis=dict(visible=False))
 
         st.plotly_chart(fig, use_container_width=True)
 
-    # ---------- Matplotlib ----------
     elif MPL_OK:
-
         fig, ax = plt.subplots()
-        y = 0
-
+        y=0
         for i, r in df_layer.iterrows():
             ax.bar(0, r["D(cm)"], bottom=y)
-
-            ax.text(0, y + r["D(cm)"]/2,
+            ax.text(0, y+r["D(cm)"]/2,
                     f"{r['Layer']}\n{r['D(cm)']} cm",
-                    ha='center', color='black')
-
-            y += r["D(cm)"]
+                    ha='center')
+            y+=r["D(cm)"]
 
         ax.set_xticks([])
         ax.invert_yaxis()
-
         st.pyplot(fig)
 
-    # ---------- HTML ----------
     else:
-
-        html = "<div style='width:200px;margin:auto;border:2px solid white;'>"
+        html = "<div style='width:200px;margin:auto;border:2px solid black;'>"
 
         for i, r in df_layer.iterrows():
-            html += f"""
-            <div style="
-                background:{colors[i]};
-                height:{r['D(cm)']*3}px;
-                color:black;
-                display:flex;
-                align-items:center;
-                justify-content:center;
-                border-bottom:1px solid white;
-            ">
-            {r['Layer']}<br>{r['D(cm)']} cm
-            </div>
-            """
+            html += f"<div style='background:{colors[i]}; height:{r['D(cm)']*3}px; display:flex; align-items:center; justify-content:center;'>"
+            html += f"{r['Layer']}<br>{r['D(cm)']} cm</div>"
 
         html += "</div>"
         html += f"<div style='text-align:center'>Total = {round(total_depth,1)} cm</div>"
 
         st.markdown(html, unsafe_allow_html=True)
 
-    # =========================
-    # ITERATION TABLE
-    # =========================
     st.subheader("📊 Iteration Table")
 
     df_steps = pd.DataFrame(steps,
         columns=["Step","D (inch)","logW","Error"])
 
     st.dataframe(df_steps, use_container_width=True)
-
-    st.info("Iterative solution until convergence (AASHTO 1993)")
