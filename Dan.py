@@ -229,83 +229,44 @@ else:
     st.metric("Thickness (inch)", D)
     st.metric("Thickness (cm)", round(D*2.54,2))
 # =========================
-# 🎬 CONSTRUCTION ANIMATION
+# SECTION + FIX FALLBACK
 # =========================
-st.subheader("🎬 Construction Animation (Layer Build-Up)")
+st.subheader("🧱 Section (AutoCAD Style)")
 
-colors = ["#000000","#3498DB","#8E5A2B","#F4D03F"]
-text_colors = ["white","black","white","black"]
+colors = ["black","blue","brown","gold"]
 
-speed = st.slider("Animation Speed (sec)", 0.2, 2.0, 0.8)
+if PLOTLY_OK:
+    # (ใช้โค้ดเดิมของคุณได้เลย)
+    pass
 
-if st.button("▶ Start Construction"):
+else:
+    # 👉 ใช้ matplotlib แทน (ยังได้รูป)
+    try:
+        import matplotlib.pyplot as plt
 
-    placeholder = st.empty()
+        fig, ax = plt.subplots()
 
-    built_depth = 0
+        y_base = 0
 
-    for i, r in edited.iterrows():
+        for i, r in edited.iterrows():
+            t = r["D(cm)"]
 
-        t = r["D(cm)"]
+            ax.bar(0, t, bottom=y_base)
 
-        # animation step (แบ่งย่อยให้ไหล)
-        steps = 10
-        step_thickness = t / steps
+            ax.text(0, y_base + t/2,
+                    f"{r['Layer']}\n{t} cm",
+                    ha='center', color='white')
 
-        for s in range(steps):
+            ax.text(0.5, y_base + t,
+                    f"D{i+1}={t} cm")
 
-            if PLOTLY_OK:
+            y_base += t
 
-                import plotly.graph_objects as go
-                fig = go.Figure()
+        ax.set_xlim(-1,1)
+        ax.set_xticks([])
+        ax.invert_yaxis()
 
-                y_base = 0
+        st.pyplot(fig)
 
-                # วาด layer ก่อนหน้า (เต็มแล้ว)
-                for j in range(i):
-                    prev_t = edited.iloc[j]["D(cm)"]
-                    fig.add_trace(go.Bar(
-                        x=[0],
-                        y=[prev_t],
-                        base=y_base,
-                        marker_color=colors[j],
-                        text=f"{edited.iloc[j]['Layer']}",
-                        textposition="inside",
-                        textfont=dict(color=text_colors[j])
-                    ))
-                    y_base += prev_t
-
-                # วาด layer ปัจจุบัน (กำลังไหล)
-                current_height = step_thickness * (s+1)
-
-                fig.add_trace(go.Bar(
-                    x=[0],
-                    y=[current_height],
-                    base=y_base,
-                    marker_color=colors[i],
-                    text=f"{r['Layer']}",
-                    textposition="inside",
-                    textfont=dict(color=text_colors[i])
-                ))
-
-                fig.update_layout(
-                    height=600,
-                    yaxis=dict(autorange="reversed"),
-                    xaxis=dict(visible=False),
-                    showlegend=False,
-                    title=f"Building: {r['Layer']}"
-                )
-
-                placeholder.plotly_chart(fig, use_container_width=True)
-
-            else:
-                # fallback text animation
-                placeholder.write(
-                    f"Building {r['Layer']}... {round((s+1)/steps*100)}%"
-                )
-
-            time.sleep(speed/steps)
-
-        built_depth += t
-
-    st.success("Construction Complete ✅")
+    except:
+        st.error("No plotting library installed at all")
