@@ -125,7 +125,7 @@ if mode == "Flexible":
                 x=[0],
                 y=[r["D(cm)"]],
                 base=y,
-                marker_color=colors[i],
+                marker_color=colors[i % len(colors)],
                 text=f"{r['Layer']}<br>{r['D(cm)']} cm",
                 textposition="inside"
             ))
@@ -134,57 +134,36 @@ if mode == "Flexible":
         fig.update_layout(height=600,
                           yaxis=dict(autorange="reversed"),
                           xaxis=dict(visible=False))
-
         st.plotly_chart(fig, use_container_width=True)
 
-    # ---------- Matplotlib ----------
-    elif MPL_OK:
-        fig, ax = plt.subplots()
-        y=0
-        for i,r in edited.iterrows():
-            ax.bar(0, r["D(cm)"], bottom=y)
-            ax.text(0, y+r["D(cm)"]/2,
-                    f"{r['Layer']}\n{r['D(cm)']} cm",
-                    ha='center', color='white')
-            y+=r["D(cm)"]
+    # ---------- HTML fallback ----------
+    else:
+        html = "<div style='width:220px;margin:auto;border:2px solid black;'>"
 
-        ax.set_xticks([])
-        ax.invert_yaxis()
-        st.pyplot(fig)
+        for i, r in edited.iterrows():
+            h = r["D(cm)"] * 3
+            display_h = max(h, 40)
 
-   # ---------- HTML (FIXED + NO OVERLAP) ----------
-else:
-    html = "<div style='width:220px;margin:auto;border:2px solid black;'>"
+            label = "" if h < 40 else f"{r['Layer']}<br>{r['D(cm)']} cm"
 
-    for i, r in df_layer.iterrows():
-
-        h = r["D(cm)"] * 3
-        display_h = max(h, 40)
-
-        if h < 40:
-            label = ""
-        else:
-            label = f"{r['Layer']}<br>{r['D(cm)']} cm"
-
-        html += f"""
+            html += f"""
 <div style="
-    background:{colors[i]};
+    background:{colors[i % len(colors)]};
     height:{display_h}px;
+    color:white;
     display:flex;
     align-items:center;
     justify-content:center;
     border-bottom:1px solid white;
     font-size:14px;
-    text-align:center;
-">
+    text-align:center;">
 {label}
 </div>
 """
 
-    html += "</div>"
-    html += f"<div style='text-align:center'>Total = {round(total_depth,1)} cm</div>"
+        html += "</div>"
+        html += f"<div style='text-align:center'>Total = {round(depth,1)} cm</div>"
 
-    st.markdown(html, unsafe_allow_html=True)
         st.markdown(html, unsafe_allow_html=True)
 
 # =========================
@@ -206,26 +185,24 @@ else:
 
     st.subheader("🧱 Rigid Pavement Section")
 
-    layers = [
+    df_layer = pd.DataFrame([
         ["PCC Slab", round(D*2.54,2)],
         ["Subbase", 15],
         ["Subgrade", 20],
-    ]
+    ], columns=["Layer","D(cm)"])
 
-    df_layer = pd.DataFrame(layers, columns=["Layer","D(cm)"])
     colors = ["#BDC3C7", "#8E5A2B", "#F4D03F"]
-
     total_depth = df_layer["D(cm)"].sum()
 
     if PLOTLY_OK:
         fig = go.Figure()
         y = 0
-
         for i, r in df_layer.iterrows():
             y0, y1 = y, y + r["D(cm)"]
 
             fig.add_shape(type="rect", x0=0, x1=1, y0=y0, y1=y1,
-                          fillcolor=colors[i], line=dict(color="black"))
+                          fillcolor=colors[i % len(colors)],
+                          line=dict(color="black"))
 
             fig.add_annotation(x=0.5, y=(y0+y1)/2,
                                text=f"{r['Layer']}<br>{r['D(cm)']} cm",
@@ -236,29 +213,28 @@ else:
         fig.update_layout(height=650,
                           yaxis=dict(autorange="reversed"),
                           xaxis=dict(visible=False))
-
         st.plotly_chart(fig, use_container_width=True)
 
-    elif MPL_OK:
-        fig, ax = plt.subplots()
-        y=0
-        for i, r in df_layer.iterrows():
-            ax.bar(0, r["D(cm)"], bottom=y)
-            ax.text(0, y+r["D(cm)"]/2,
-                    f"{r['Layer']}\n{r['D(cm)']} cm",
-                    ha='center')
-            y+=r["D(cm)"]
-
-        ax.set_xticks([])
-        ax.invert_yaxis()
-        st.pyplot(fig)
-
     else:
-        html = "<div style='width:200px;margin:auto;border:2px solid black;'>"
+        html = "<div style='width:220px;margin:auto;border:2px solid black;'>"
 
         for i, r in df_layer.iterrows():
-            html += f"<div style='background:{colors[i]}; height:{r['D(cm)']*3}px; display:flex; align-items:center; justify-content:center;'>"
-            html += f"{r['Layer']}<br>{r['D(cm)']} cm</div>"
+            h = r["D(cm)"] * 3
+            display_h = max(h, 40)
+
+            label = "" if h < 40 else f"{r['Layer']}<br>{r['D(cm)']} cm"
+
+            html += f"""
+<div style="
+    background:{colors[i % len(colors)]};
+    height:{display_h}px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    border-bottom:1px solid white;">
+{label}
+</div>
+"""
 
         html += "</div>"
         html += f"<div style='text-align:center'>Total = {round(total_depth,1)} cm</div>"
@@ -266,8 +242,5 @@ else:
         st.markdown(html, unsafe_allow_html=True)
 
     st.subheader("📊 Iteration Table")
-
-    df_steps = pd.DataFrame(steps,
-        columns=["Step","D (inch)","logW","Error"])
-
+    df_steps = pd.DataFrame(steps, columns=["Step","D (inch)","logW","Error"])
     st.dataframe(df_steps, use_container_width=True)
