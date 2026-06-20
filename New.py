@@ -1,25 +1,61 @@
 import streamlit as st
+import math
 
-def calculate_structure_number(cbr_values, thicknesses):
-    sn = 0
-    for cbr, thickness in zip(cbr_values, thicknesses):
-        sn += (thickness / 12) * (cbr / 100)
-    return sn
+st.set_page_config(page_title="AASHTO 1993 Pavement Design", layout="wide")
 
-st.title("Structure Number Calculator - AASHTO 1993")
+st.title("AASHTO 1993 Pavement Design")
 
-# รับข้อมูลจากผู้ใช้
-num_layers = st.number_input("Number of Layers", min_value=1, max_value=10, value=1)
+# เลือกประเภท
+pavement_type = st.sidebar.selectbox(
+    "เลือกประเภทผิวทาง",
+    ["Flexible Pavement", "Rigid Pavement"]
+)
 
-cbr_values = []
-thicknesses = []
+# -----------------------------
+# Flexible Pavement
+# -----------------------------
+if pavement_type == "Flexible Pavement":
+    st.header("Flexible Pavement Design (SN)")
 
-for i in range(num_layers):
-    cbr = st.number_input(f"CBR Value for Layer {i+1} (%)", min_value=0.0, max_value=100.0, value=10.0)
-    thickness = st.number_input(f"Thickness for Layer {i+1} (inches)", min_value=0.0, value=12.0)
-    cbr_values.append(cbr)
-    thicknesses.append(thickness)
+    W18 = st.number_input("ESAL (W18)", value=1e6)
+    ZR = st.number_input("Zr (Reliability Factor)", value=-1.645)
+    So = st.number_input("Standard Deviation (So)", value=0.45)
+    delta_PSI = st.number_input("ΔPSI", value=1.7)
+    Mr = st.number_input("Subgrade Resilient Modulus (psi)", value=8000.0)
 
-if st.button("Calculate Structure Number"):
-    sn = calculate_structure_number(cbr_values, thicknesses)
-    st.success(f"The Structure Number (SN) is: {sn:.2f}")
+    if st.button("คำนวณ SN"):
+
+        # สมการ AASHTO 1993 (ประมาณ)
+        SN = (math.log10(W18) - ZR * So + 0.20 + math.log10(delta_PSI)) / (
+            0.40 + (1094 / ((SN if 'SN' in locals() else 5.0) + 1) ** 5.19)
+        )
+
+        st.success(f"Structural Number (SN) ≈ {round(SN, 3)}")
+
+# -----------------------------
+# Rigid Pavement
+# -----------------------------
+elif pavement_type == "Rigid Pavement":
+    st.header("Rigid Pavement Design (Thickness)")
+
+    W18 = st.number_input("ESAL (W18)", value=1e6)
+    ZR = st.number_input("Zr", value=-1.645)
+    So = st.number_input("So", value=0.35)
+    delta_PSI = st.number_input("ΔPSI", value=1.5)
+    Sc = st.number_input("Modulus of Rupture Sc (psi)", value=650.0)
+    Ec = st.number_input("Elastic Modulus Ec (psi)", value=4e6)
+    k = st.number_input("k-value (pci)", value=100.0)
+
+    if st.button("คำนวณ Thickness"):
+
+        # สูตรประมาณ (simplified)
+        D = (
+            (math.log10(W18) + ZR * So) /
+            (0.75 + (1.624e7 / (Sc ** 2)))
+        )
+
+        st.success(f"Thickness D ≈ {round(D, 2)} inches")
+
+# Footer
+st.markdown("---")
+st.caption("Based on AASHTO 1993 Pavement Design Guide")
